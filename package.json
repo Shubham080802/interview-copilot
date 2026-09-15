@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "AI mock interviews tailored to the target company, with proctoring, evaluation and learning sessions.",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22.13"

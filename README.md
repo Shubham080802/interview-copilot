@@ -123,3 +123,7 @@ scripts/fetch-models.mjs    copies the MediaPipe face-tracking model into public
 - `npm run typecheck` — TypeScript check
 - `http://localhost:3000/interviews/<id>/room?fakeCamera=1` — synthetic camera for testing the room without hardware (development builds only)
 - Set `DEMO_MODE=1` to force demo mode even with a key configured
+
+## License
+
+[MIT](LICENSE) © 2026 Shubham Kumar
