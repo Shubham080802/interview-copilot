@@ -1,0 +1,533 @@
+"use client";
+import {
+  AlertTriangle,
+  Camera,
+  CheckCircle2,
+  Circle,
+  Mic,
+  MicOff,
+  PhoneOff,
+  RotateCcw,
+  ShieldCheck,
+  SkipForward,
+  Video,
+  Volume2,
+  VolumeX,
+  XCircle,
+} from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CodeEditor } from "@/components/CodeEditor";
+import { cx, Spinner } from "@/components/ui";
+import { api, formatDuration } from "@/lib/client/api";
+import { useMediaStream, useRecorder, useSpeaker, useSpeechRecognition } from "@/lib/client/media";
+import { useProctoring, type FaceStatus } from "@/lib/client/proctoring";
+import { useInterview } from "@/lib/client/useInterview";
+import { ROUND_LABELS, type FollowUp, type PlanQuestion, type RoundType } from "@/lib/schemas";
+import type { InterviewResponse } from "@/lib/types";
+
+type Phase = "setup" | "intro" | "question" | "submitting" | "reacting" | "closing";
+
+interface Turn {
+  index: number;
+  question: PlanQuestion;
+  roundType: RoundType;
+  prompt: string;
+  isFollowUp: boolean;
+  parentResponseId: string | null;
+}
+
+const FACE_LABEL: Record<FaceStatus, { text: string; tone: string }> = {
+  loading: { text: "Starting face tracking…", tone: "text-slate-300" },
+  ok: { text: "Face detected", tone: "text-emerald-400" },
+  no_face: { text: "No face detected", tone: "text-rose-400" },
+  multiple_faces: { text: "Multiple faces", tone: "text-rose-400" },
+  looking_away: { text: "Looking away", tone: "text-amber-300" },
+  unavailable: { text: "Face tracking unavailable", tone: "text-slate-400" },
+};
+
+export function InterviewRoom({ id }: { id: string }) {
+  const router = useRouter();
+  const { data, error: loadError } = useInterview(id);
+  const media = useMediaStream();
+  const speaker = useSpeaker();
+  const recorder = useRecorder(id);
+
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  const [phase, setPhase] = useState<Phase>("setup");
+  const [consent, setConsent] = useState(false);
+  const [turn, setTurn] = useState<Turn | null>(null);
+  const [answer, setAnswer] = useState("");
+  const [code, setCode] = useState("");
+  const [language, setLanguage] = useState("javascript");
+  const [caption, setCaption] = useState("");
+  const [startedAt, setStartedAt] = useState(Date.now());
+  const [now, setNow] = useState(Date.now());
+  const [autoListen, setAutoListen] = useState(true);
+  const [answeredCount, setAnsweredCount] = useState(0);
+  const [actionError, setActionError] = useState("");
+  const turnRef = useRef<Turn | null>(null);
+  turnRef.current = turn;
+
+  const interview = data?.interview;
+  const plan = interview?.plan;
+  const proctoringOn = Boolean(interview?.config.proctoring);
+  const inSession = phase !== "setup";
+
+  const items = useMemo(
+    () => plan?.rounds.flatMap((r) => r.questions.map((q) => ({ question: q, roundType: r.type }))) ?? [],
+    [plan],
+  );
+
+  const sr = useSpeechRecognition(
+    useCallback((text: string) => setAnswer((a) => (a ? `${a} ${text}` : text)), []),
+  );
+
+  const proctor = useProctoring({
+    interviewId: id,
+    video: videoEl,
+    enabled: proctoringOn,
+    active: inSession && phase !== "closing",
+  });
+
+  // Attach the camera stream to the <video>.
+  useEffect(() => {
+    if (videoEl && media.stream && videoEl.srcObject !== media.stream) videoEl.srcObject = media.stream;
+  }, [videoEl, media.stream]);
+
+  // Ask for camera as soon as the room opens.
+  const requested = useRef(false);
+  useEffect(() => {
+    if (!requested.current) {
+      requested.current = true;
+      media.request();
+    }
+  }, [media]);
+
+  // Clock for timers.
+  useEffect(() => {
+    if (!inSession) return;
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [inSession]);
+
+  // Warn before leaving mid-interview.
+  useEffect(() => {
+    if (!inSession || phase === "closing") return;
+    const handler = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [inSession, phase]);
+
+  const say = useCallback(
+    async (text: string) => {
+      setCaption(text);
+      await speaker.speak(text);
+    },
+    [speaker],
+  );
+
+  /* ----------------------------- flow ----------------------------- */
+
+  const finish = useCallback(
+    async (early: boolean) => {
+      setPhase("closing");
+      sr.stop();
+      if (!early && plan) await say(plan.closing_script);
+      else speaker.cancel();
+      await proctor.finalize();
+      await recorder.stop();
+      try {
+        await api(`/api/interviews/${id}/finish`, { method: "POST", json: {} });
+      } catch (e) {
+        // "cannot be evaluated" happens when nothing was answered — just leave the room.
+        console.warn(e);
+      }
+      media.stream?.getTracks().forEach((t) => t.stop());
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+      router.push(`/interviews/${id}`);
+    },
+    [id, media.stream, plan, proctor, recorder, router, say, speaker, sr],
+  );
+
+  const goTo = useCallback(
+    async (index: number) => {
+      const item = items[index];
+      if (!item) return finish(false);
+      const previous = turnRef.current;
+      const next: Turn = { index, question: item.question, roundType: item.roundType, prompt: item.question.prompt, isFollowUp: false, parentResponseId: null };
+      setTurn(next);
+      setAnswer("");
+      setCode(item.question.starter_code ?? "");
+      if (item.question.language_hint) setLanguage(item.question.language_hint.toLowerCase());
+      setStartedAt(Date.now());
+      setPhase("question");
+      if (previous && previous.roundType !== item.roundType) {
+        await say(`Great. Let's move on to the ${ROUND_LABELS[item.roundType]} round.`);
+      }
+      await say(item.question.prompt);
+      if (autoListen && sr.supported && turnRef.current?.index === index) sr.start();
+    },
+    [autoListen, finish, items, say, sr],
+  );
+
+  async function begin() {
+    if (!interview || !plan || !media.stream) return;
+    setActionError("");
+    // Request full screen synchronously inside the click (user gesture); never block on it.
+    if (proctoringOn && !document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
+    try {
+      await api(`/api/interviews/${id}/start`, { method: "POST", json: {} });
+    } catch (e) {
+      setActionError((e as Error).message);
+      return;
+    }
+    if (interview.config.recordVideo && !interview.hasRecording) recorder.start(media.stream);
+
+    const answered = new Set((data?.responses ?? []).filter((r) => !r.isFollowUp).map((r) => r.questionId));
+    setAnsweredCount(answered.size);
+    const startIndex = items.findIndex((it) => !answered.has(it.question.id));
+    setPhase("intro");
+    await say(answered.size ? `Welcome back. Let's continue where we left off.` : plan.intro_script);
+    await goTo(startIndex === -1 ? items.length : startIndex);
+  }
+
+  async function submit(skipped: boolean) {
+    const current = turnRef.current;
+    if (!current) return;
+    sr.stop();
+    speaker.cancel();
+    setPhase("submitting");
+    setActionError("");
+    const isCoding = current.question.kind === "coding";
+    try {
+      const { response, followUp } = await api<{ response: InterviewResponse; followUp: FollowUp }>(`/api/interviews/${id}/responses`, {
+        method: "POST",
+        json: {
+          questionId: current.question.id,
+          roundType: current.roundType,
+          prompt: current.prompt,
+          isFollowUp: current.isFollowUp,
+          parentResponseId: current.parentResponseId,
+          answerText: skipped ? "" : answer,
+          code: skipped || !isCoding ? "" : code,
+          codeLanguage: isCoding ? language : "",
+          skipped,
+          startedAt: new Date(startedAt).toISOString(),
+          endedAt: new Date().toISOString(),
+          speakingSeconds: sr.takeSpeakingSeconds(),
+        },
+      });
+      if (!current.isFollowUp) setAnsweredCount((n) => n + 1);
+      setPhase("reacting");
+
+      if (followUp.ask_follow_up && followUp.follow_up_question && !skipped) {
+        await say(followUp.acknowledgement);
+        const next: Turn = { ...current, prompt: followUp.follow_up_question, isFollowUp: true, parentResponseId: response.id };
+        setTurn(next);
+        setAnswer("");
+        setStartedAt(Date.now());
+        setPhase("question");
+        await say(followUp.follow_up_question);
+        if (autoListen && sr.supported && turnRef.current === next) sr.start();
+      } else {
+        await say(followUp.acknowledgement);
+        await goTo(current.index + 1);
+      }
+    } catch (e) {
+      setActionError((e as Error).message);
+      setPhase("question");
+    }
+  }
+
+  /* ----------------------------- render ----------------------------- */
+
+  if (loadError) return <FullMessage>{loadError}</FullMessage>;
+  if (!interview) return <FullMessage><Spinner /> Loading interview…</FullMessage>;
+  if (!plan || !["ready", "in_progress"].includes(interview.status)) {
+    return (
+      <FullMessage>
+        This interview isn&apos;t ready to be taken.{" "}
+        <Link className="text-brand-400 underline" href={`/interviews/${id}`}>Back to overview</Link>
+      </FullMessage>
+    );
+  }
+
+  const q = turn?.question;
+  const isCoding = q?.kind === "coding";
+  const elapsed = Math.max(0, Math.round((now - startedAt) / 1000));
+  const limit = turn?.isFollowUp ? 150 : (q?.time_limit_seconds ?? 180);
+  const overTime = elapsed > limit;
+  const canAnswer = phase === "question";
+  const face = FACE_LABEL[proctoringOn ? proctor.faceStatus : "unavailable"];
+
+  return (
+    <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100">
+      {/* Top bar */}
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold">{interview.config.role} · {interview.config.company}</div>
+          <div className="text-xs text-slate-400">
+            {turn ? `${ROUND_LABELS[turn.roundType]} round · Question ${Math.min(turn.index + 1, items.length)} of ${items.length}${turn.isFollowUp ? " · follow-up" : ""}` : `${items.length} questions`}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 text-xs">
+          {inSession && (
+            <span className={cx("rounded-full px-2.5 py-1 font-mono tabular-nums", overTime ? "bg-rose-500/20 text-rose-300" : "bg-white/10")}>
+              {formatDuration(elapsed)} / {formatDuration(limit)}
+            </span>
+          )}
+          {proctoringOn && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" /> Proctored{proctor.flagCount > 0 && ` · ${proctor.flagCount} flag${proctor.flagCount > 1 ? "s" : ""}`}
+            </span>
+          )}
+          {recorder.recording && <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-2.5 py-1 text-rose-300"><Circle className="h-2.5 w-2.5 animate-pulse fill-current" /> REC</span>}
+          <button onClick={() => speaker.setEnabled(!speaker.enabled)} className="rounded-full bg-white/10 p-1.5 hover:bg-white/20" title={speaker.enabled ? "Mute interviewer voice" : "Unmute interviewer voice"}>
+            {speaker.enabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          </button>
+          {inSession && phase !== "closing" && (
+            <button
+              onClick={() => confirm("End the interview now? Unanswered questions will be skipped and your answers will be evaluated.") && finish(true)}
+              className="inline-flex items-center gap-1.5 rounded-full bg-rose-600 px-3 py-1.5 font-medium hover:bg-rose-700"
+            >
+              <PhoneOff className="h-3.5 w-3.5" /> End interview
+            </button>
+          )}
+        </div>
+      </header>
+
+      <div className="grid flex-1 gap-4 p-4 lg:grid-cols-12">
+        {/* Left: interviewer + candidate video. Video keeps its tree position across phases. */}
+        <div className="flex flex-col gap-4 lg:col-span-5">
+          {inSession && (
+            <div className="relative flex min-h-[220px] flex-col items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-900 via-slate-900 to-slate-900 p-6 ring-1 ring-white/10">
+              <div className={cx("grid h-20 w-20 place-items-center rounded-full bg-brand-600 text-2xl font-semibold", speaker.speaking && "pulse-ring")}>
+                {plan.interviewer_name.slice(0, 1)}
+              </div>
+              <div className="mt-3 text-sm font-medium">{plan.interviewer_name}</div>
+              <div className="text-xs text-slate-400">Interviewer · {interview.config.company}</div>
+              <div className="mt-3 flex h-5 items-end gap-1">
+                {[0, 1, 2, 3, 4].map((n) => (
+                  <span key={n} className={cx("w-1 rounded-full bg-brand-400", speaker.speaking ? "speak-bar" : "h-1")} style={speaker.speaking ? { height: 20, animationDelay: `${n * 0.12}s` } : undefined} />
+                ))}
+              </div>
+              {(phase === "submitting" || phase === "reacting") && !speaker.speaking && <div className="mt-2 flex items-center gap-2 text-xs text-slate-300"><Spinner className="h-3 w-3" /> thinking…</div>}
+              {caption && speaker.speaking && (
+                <div className="mt-3 line-clamp-3 max-w-md rounded-lg bg-black/40 px-3 py-2 text-center text-xs leading-relaxed text-slate-100">{caption}</div>
+              )}
+            </div>
+          )}
+
+          <div className="relative aspect-video overflow-hidden rounded-2xl bg-black ring-1 ring-white/10">
+            <video ref={setVideoEl} autoPlay playsInline muted className="h-full w-full -scale-x-100 object-cover" />
+            {!media.stream && (
+              <div className="absolute inset-0 grid place-items-center p-6 text-center text-sm text-slate-400">
+                {media.error ? (
+                  <div>
+                    <p className="text-rose-300">{media.error}</p>
+                    <button onClick={media.request} className="mt-3 rounded-lg bg-white/10 px-3 py-1.5 text-slate-100 hover:bg-white/20">Try again</button>
+                  </div>
+                ) : (
+                  <span className="flex items-center gap-2"><Spinner /> Waiting for camera permission…</span>
+                )}
+              </div>
+            )}
+            <div className="absolute left-3 top-3 flex items-center gap-2 rounded-full bg-black/60 px-2.5 py-1 text-xs">
+              <Video className="h-3.5 w-3.5" /> You
+              {proctoringOn && <span className={face.tone}>· {face.text}</span>}
+            </div>
+            {sr.listening && (
+              <div className="absolute bottom-3 left-3 flex items-center gap-1.5 rounded-full bg-rose-600/90 px-2.5 py-1 text-xs"><Mic className="h-3.5 w-3.5" /> Listening</div>
+            )}
+            {proctor.warning && inSession && (
+              <div className="absolute inset-x-3 bottom-3 flex items-start gap-2 rounded-lg bg-amber-500/95 px-3 py-2 text-xs font-medium text-amber-950">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {proctor.warning.message}
+              </div>
+            )}
+          </div>
+
+          {inSession && interview.zoom && (
+            <a href={interview.zoom.joinUrl} target="_blank" rel="noreferrer" className="rounded-xl bg-white/5 px-4 py-3 text-xs text-slate-300 ring-1 ring-white/10 hover:bg-white/10">
+              Zoom meeting for panelists: <span className="text-brand-300 underline">{interview.zoom.joinUrl}</span>
+            </a>
+          )}
+        </div>
+
+        {/* Right: setup checklist or question + answer */}
+        <div className="flex flex-col gap-4 lg:col-span-7">
+          {!inSession ? (
+            <SetupPanel
+              name={plan.interviewer_name}
+              questionCount={items.length}
+              resumed={(data?.responses.length ?? 0) > 0}
+              cameraReady={Boolean(media.stream)}
+              speechSupported={sr.supported}
+              faceStatus={proctoringOn ? proctor.faceStatus : null}
+              proctoring={proctoringOn}
+              recording={interview.config.recordVideo}
+              consent={consent}
+              setConsent={setConsent}
+              autoListen={autoListen}
+              setAutoListen={setAutoListen}
+              onStart={begin}
+              error={actionError}
+            />
+          ) : phase === "intro" || !turn ? (
+            <div className="grid flex-1 place-items-center rounded-2xl bg-white/5 p-8 text-center ring-1 ring-white/10">
+              <div>
+                <p className="text-lg font-medium">{phase === "closing" ? "Wrapping up…" : "Your interviewer is introducing the session"}</p>
+                <p className="mt-2 max-w-lg text-sm text-slate-400">{caption}</p>
+                {phase === "closing" && <div className="mt-4 flex items-center justify-center gap-2 text-sm text-slate-300"><Spinner /> Saving your answers, recording and proctoring log</div>}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="rounded-2xl bg-white/5 p-5 ring-1 ring-white/10">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="rounded-full bg-brand-500/20 px-2 py-0.5 font-medium text-brand-200">{turn.isFollowUp ? "Follow-up" : ROUND_LABELS[turn.roundType]}</span>
+                  {!turn.isFollowUp && <span className="rounded-full bg-white/10 px-2 py-0.5 text-slate-300">{q?.topic}</span>}
+                  {!turn.isFollowUp && <span className="rounded-full bg-white/10 px-2 py-0.5 capitalize text-slate-300">{q?.difficulty}</span>}
+                  <button onClick={() => say(turn.prompt)} disabled={speaker.speaking} className="ml-auto inline-flex items-center gap-1 text-slate-400 hover:text-white disabled:opacity-40">
+                    <RotateCcw className="h-3.5 w-3.5" /> Repeat
+                  </button>
+                  {speaker.speaking && <button onClick={speaker.cancel} className="text-slate-400 hover:text-white">Skip reading</button>}
+                </div>
+                <p className="mt-3 text-lg leading-relaxed">{turn.prompt}</p>
+                {overTime && <p className="mt-2 text-xs text-rose-300">You&apos;re over the suggested time — start wrapping up your answer.</p>}
+              </div>
+
+              {isCoding && (
+                <div className="h-[340px]">
+                  <CodeEditor value={code} onChange={setCode} language={language} onLanguageChange={setLanguage} />
+                </div>
+              )}
+
+              <div className="flex flex-1 flex-col rounded-2xl bg-white/5 p-4 ring-1 ring-white/10">
+                <div className="mb-2 flex items-center justify-between text-xs text-slate-400">
+                  <span>{isCoding ? "Explain your approach (speak or type)" : "Your answer (speak or type)"}</span>
+                  {sr.error && <span className="text-amber-300">{sr.error}</span>}
+                </div>
+                <textarea
+                  value={answer}
+                  onChange={(e) => setAnswer(e.target.value)}
+                  disabled={!canAnswer}
+                  placeholder={sr.supported ? "Press the microphone and start speaking — your words appear here. You can also type." : "Type your answer here (voice answers need Chrome or Edge)."}
+                  className={cx("w-full flex-1 resize-none rounded-xl bg-black/30 p-3 text-sm leading-relaxed text-slate-100 outline-none ring-1 ring-white/10 placeholder:text-slate-500 focus:ring-brand-500", isCoding ? "min-h-[90px]" : "min-h-[180px]")}
+                />
+                {sr.interim && <p className="mt-2 text-sm italic text-slate-400">{sr.interim}</p>}
+                {actionError && <p className="mt-2 text-sm text-rose-300">{actionError}</p>}
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {sr.supported && (
+                    <button
+                      onClick={() => (sr.listening ? sr.stop() : sr.start())}
+                      disabled={!canAnswer || speaker.speaking}
+                      className={cx("inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition disabled:opacity-40", sr.listening ? "bg-rose-600 hover:bg-rose-700" : "bg-white/10 hover:bg-white/20")}
+                    >
+                      {sr.listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                      {sr.listening ? "Stop mic" : "Answer by voice"}
+                    </button>
+                  )}
+                  <span className="text-xs text-slate-500">{answeredCount} of {items.length} answered</span>
+                  <div className="ml-auto flex gap-2">
+                    <button onClick={() => submit(true)} disabled={!canAnswer} className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-sm text-slate-300 hover:bg-white/10 disabled:opacity-40">
+                      <SkipForward className="h-4 w-4" /> Skip
+                    </button>
+                    <button
+                      onClick={() => submit(false)}
+                      disabled={!canAnswer || (!answer.trim() && !(isCoding && code.trim() && code !== (q?.starter_code ?? "")))}
+                      className="inline-flex items-center gap-2 rounded-full bg-brand-600 px-5 py-2 text-sm font-medium hover:bg-brand-500 disabled:opacity-40"
+                    >
+                      {phase === "submitting" ? <Spinner className="h-4 w-4" /> : null}
+                      Submit answer
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FullMessage({ children }: { children: React.ReactNode }) {
+  return <div className="flex min-h-screen items-center justify-center gap-2 bg-slate-950 p-6 text-slate-300">{children}</div>;
+}
+
+function SetupPanel(props: {
+  name: string;
+  questionCount: number;
+  resumed: boolean;
+  cameraReady: boolean;
+  speechSupported: boolean;
+  faceStatus: FaceStatus | null;
+  proctoring: boolean;
+  recording: boolean;
+  consent: boolean;
+  setConsent: (v: boolean) => void;
+  autoListen: boolean;
+  setAutoListen: (v: boolean) => void;
+  onStart: () => void;
+  error: string;
+}) {
+  const needsConsent = props.proctoring || props.recording;
+  const faceOk = props.faceStatus === null || props.faceStatus === "ok" || props.faceStatus === "unavailable";
+  const checks = [
+    { ok: props.cameraReady, label: "Camera and microphone connected", icon: Camera },
+    { ok: props.speechSupported, label: props.speechSupported ? "Voice answers supported" : "Voice answers need Chrome/Edge — you can type instead", icon: Mic, optional: true },
+    ...(props.proctoring
+      ? [{ ok: props.faceStatus === "ok", label: props.faceStatus === "unavailable" ? "Face tracking unavailable — other proctoring checks stay active" : props.faceStatus === "ok" ? "Your face is clearly visible" : "Position yourself so only your face is in frame", icon: ShieldCheck, optional: props.faceStatus === "unavailable" }]
+      : []),
+  ];
+
+  return (
+    <div className="flex flex-1 flex-col rounded-2xl bg-white/5 p-6 ring-1 ring-white/10">
+      <h1 className="text-xl font-semibold">{props.resumed ? "Resume your interview" : "Get ready for your interview"}</h1>
+      <p className="mt-1 text-sm text-slate-400">{props.name} will ask {props.questionCount} questions out loud. Answer by voice or by typing; coding questions open an editor.</p>
+
+      <ul className="mt-6 space-y-3">
+        {checks.map((c) => (
+          <li key={c.label} className="flex items-center gap-3 text-sm">
+            {c.ok ? <CheckCircle2 className="h-5 w-5 text-emerald-400" /> : c.optional ? <AlertTriangle className="h-5 w-5 text-amber-300" /> : <XCircle className="h-5 w-5 text-slate-500" />}
+            <span className={c.ok ? "" : "text-slate-300"}>{c.label}</span>
+          </li>
+        ))}
+      </ul>
+
+      {props.speechSupported && (
+        <label className="mt-6 flex items-center gap-2 text-sm text-slate-300">
+          <input type="checkbox" className="accent-brand-500" checked={props.autoListen} onChange={(e) => props.setAutoListen(e.target.checked)} />
+          Hands-free: start the microphone automatically after each question
+        </label>
+      )}
+
+      {needsConsent && (
+        <label className="mt-4 flex items-start gap-2 rounded-xl bg-black/30 p-3 text-sm text-slate-300 ring-1 ring-white/10">
+          <input type="checkbox" className="mt-0.5 accent-brand-500" checked={props.consent} onChange={(e) => props.setConsent(e.target.checked)} />
+          <span>
+            I understand this session is {props.proctoring && "proctored (camera face tracking, tab/focus changes, full screen and paste monitoring, with snapshots when something is flagged)"}
+            {props.proctoring && props.recording && " and "}
+            {props.recording && "recorded"}. Everything is stored locally on this computer.
+          </span>
+        </label>
+      )}
+
+      {props.error && <p className="mt-4 text-sm text-rose-300">{props.error}</p>}
+
+      <div className="mt-auto flex items-center justify-between gap-3 pt-6">
+        <span className="text-xs text-slate-500">{props.proctoring ? "The interview opens in full screen." : ""}{!faceOk && props.cameraReady ? " Waiting for a clear view of your face…" : ""}</span>
+        <button
+          onClick={props.onStart}
+          disabled={!props.cameraReady || (needsConsent && !props.consent)}
+          className="rounded-full bg-brand-600 px-6 py-2.5 text-sm font-semibold hover:bg-brand-500 disabled:opacity-40"
+        >
+          {props.resumed ? "Resume interview" : "Start interview"}
+        </button>
+      </div>
+    </div>
+  );
+}
