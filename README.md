@@ -9,6 +9,7 @@ AI mock interviews tailored to the company and role you're targeting — run as 
 | **1. Set up** | Import a job posting from its link (or pick the field, role, level and company yourself), add requirements and what you know about the company, and choose rounds: Technical, Coding, Behavioural, System Design, HR. Upload your resume (PDF) once to fill in your profile. |
 | **2. Prepare** | Claude researches the company's current work on the web (products, launches, tech stack, interview style), reads your profile/resume and your **history from past interviews**, then designs the questions — avoiding repeats and deliberately probing past weak spots. |
 | **3. Interview (video mode)** | An AI interviewer asks each question out loud. You answer by voice (live speech-to-text) or typing; coding questions open a code editor (JavaScript can be run in-browser). The interviewer asks follow-ups when an answer is vague or incomplete, and you can **ask clarifying questions** (scope, constraints, assumptions) — the interviewer answers without giving away the solution, and good clarifying questions count in your evaluation. |
+| **Camera on, always** | Every interview runs on camera. If the camera turns off, is taken by another app, or is covered (black image), the interview **pauses**: the question is hidden, the timer stops, and the server refuses answers until the camera is back. Each gap is logged in the integrity report, and recording continues as a new part after reconnecting. |
 | **4. Proctoring** | Runs in parallel: camera face tracking (out of frame, multiple people, looking away), tab switches, window focus loss, leaving full screen, pasting, extended displays. Flags include snapshots and produce an auditable integrity score. The session can be recorded. |
 | **5. Evaluation** | Every answer gets a score, strengths, improvements, missed points, a model answer and a coaching tip. Rounds and the overall interview get scores, a hire recommendation, communication analysis (pace, filler words) and an action plan. |
 | **6. Learning session** | Replay the recording, chat with an AI coach that has your full transcript, and **practice any question again** to get re-scored. |
@@ -74,6 +75,8 @@ Everything is stored locally in `data/` (git-ignored):
 - `data/snapshots/` — proctoring snapshots
 
 Interview content is sent to the Anthropic API for generation and evaluation when AI mode is on. Deleting an interview removes its answers, recording and snapshots.
+
+**Camera enforcement** is checked in two places: the interview room watches the video track and picture (ended, muted, or near-black frames for 3s), and sends a heartbeat every 5 seconds. The API rejects starting, answering and clarifying questions unless a camera-on heartbeat arrived within the last 15 seconds.
 
 Proctoring signals are automated indicators, not proof of cheating — the report says so and links the evidence (snapshots, timeline, recording) for review.
 
