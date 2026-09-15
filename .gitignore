@@ -7,3 +7,4 @@ next-env.d.ts
 data/
 public/mediapipe/
 .DS_Store
+.vercel
