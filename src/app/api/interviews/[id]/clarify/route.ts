@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { fail, loadInterview, type IdParams } from "@/lib/api";
+import { cameraRequired, fail, loadInterview, type IdParams } from "@/lib/api";
+import { isCameraLive } from "@/lib/repo";
 import { clarify, MAX_CLARIFICATIONS } from "@/lib/service";
 
 const ClarifyInput = z.object({
@@ -17,6 +18,7 @@ export async function POST(req: Request, ctx: IdParams) {
   const interview = await loadInterview(ctx);
   if (!interview) return fail("Interview not found", 404);
   if (interview.status !== "in_progress") return fail("Interview is not in progress");
+  if (!isCameraLive(interview.id)) return cameraRequired();
   const parsed = ClarifyInput.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return fail("Type or speak your question first");
   if (parsed.data.previous.length >= MAX_CLARIFICATIONS) return fail(`You can ask up to ${MAX_CLARIFICATIONS} clarifying questions per question.`);

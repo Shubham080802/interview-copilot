@@ -5,30 +5,41 @@ import { fail, loadInterview, type IdParams } from "@/lib/api";
 import { recordingPath } from "@/lib/repo";
 
 const MAX_CHUNK = 50 * 1024 * 1024;
+const MAX_SEGMENTS = 50;
 
-/** Appends one MediaRecorder chunk. `x-seq: 0` starts a fresh file. */
+function parseSegment(value: string | null): number | null {
+  const n = Number(value ?? "1");
+  return Number.isInteger(n) && n >= 1 && n <= MAX_SEGMENTS ? n : null;
+}
+
+/** Appends one MediaRecorder chunk to a recording part. `x-seq: 0` starts the part's file. */
 export async function POST(req: Request, ctx: IdParams) {
   const interview = await loadInterview(ctx);
   if (!interview) return fail("Interview not found", 404);
   if (!interview.config.recordVideo) return fail("Recording is disabled for this interview");
+  if (interview.status !== "in_progress") return fail("Interview is not in progress");
+  const segment = parseSegment(req.headers.get("x-segment"));
+  if (!segment) return fail("Invalid recording part");
   const buf = Buffer.from(await req.arrayBuffer());
   if (buf.length > MAX_CHUNK) return fail("Chunk too large", 413);
-  const file = recordingPath(interview.id);
+  const file = recordingPath(interview.id, segment);
   if (req.headers.get("x-seq") === "0") fs.writeFileSync(file, buf);
   else fs.appendFileSync(file, buf);
   return NextResponse.json({ ok: true });
 }
 
-/** Streams the recording with HTTP range support so the video can be scrubbed. */
+/** Streams a recording part (`?segment=n`) with HTTP range support so it can be scrubbed. */
 export async function GET(req: Request, ctx: IdParams) {
   const interview = await loadInterview(ctx);
-  if (!interview?.hasRecording) return fail("Recording not found", 404);
-  const file = recordingPath(interview.id);
+  const params = new URL(req.url).searchParams;
+  const segment = parseSegment(params.get("segment"));
+  if (!interview || !segment || !interview.recordingSegments.includes(segment)) return fail("Recording not found", 404);
+  const file = recordingPath(interview.id, segment);
   const size = fs.statSync(file).size;
   const range = /bytes=(\d*)-(\d*)/.exec(req.headers.get("range") ?? "");
-  const download = new URL(req.url).searchParams.has("download");
+  const download = params.has("download");
   const headers: Record<string, string> = { "Content-Type": "video/webm", "Accept-Ranges": "bytes" };
-  if (download) headers["Content-Disposition"] = `attachment; filename="interview-${interview.id}.webm"`;
+  if (download) headers["Content-Disposition"] = `attachment; filename="interview-${interview.id}${segment > 1 ? `-part${segment}` : ""}.webm"`;
 
   if (range && !download) {
     const start = range[1] ? Number(range[1]) : 0;

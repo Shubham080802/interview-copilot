@@ -24,7 +24,7 @@ export const EVENT_LABELS: Record<ProctorEventType, string> = {
   paste: "Pasted text",
   copy: "Copied text",
   multiple_screens: "Extended display detected",
-  camera_off: "Camera stopped",
+  camera_off: "Camera off / blocked",
   note: "Note",
 };
 
@@ -39,13 +39,15 @@ export function computeIntegrity(events: ProctorEvent[]): IntegrityReport {
     // Long absences cost more than blips.
     const durationFactor = 1 + Math.min(e.durationSec, 120) / 30;
     penalty += WEIGHTS[e.type] * sev * durationFactor;
-    if (["no_face", "looking_away", "tab_hidden", "window_blur"].includes(e.type)) awaySeconds += e.durationSec;
+    if (["no_face", "looking_away", "tab_hidden", "window_blur", "camera_off"].includes(e.type)) awaySeconds += e.durationSec;
   }
   const score = Math.max(0, Math.round(100 - penalty));
   const level: IntegrityReport["level"] =
     score >= 90 ? "clean" : score >= 70 ? "minor_flags" : score >= 45 ? "suspicious" : "high_risk";
 
   const notes: string[] = [];
+  const cameraOffSeconds = events.filter((e) => e.type === "camera_off").reduce((s, e) => s + e.durationSec, 0);
+  if (counts.camera_off) notes.push(`The camera was off ${counts.camera_off} time(s), about ${Math.round(cameraOffSeconds)}s in total; the interview was paused meanwhile.`);
   if (counts.multiple_faces) notes.push(`Another person appeared on camera ${counts.multiple_faces} time(s).`);
   if (counts.tab_hidden) notes.push(`The interview tab was hidden ${counts.tab_hidden} time(s).`);
   if (counts.paste) notes.push(`Text was pasted into an answer ${counts.paste} time(s).`);

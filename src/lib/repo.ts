@@ -56,7 +56,8 @@ function rowToInterview(r: Row): Interview {
     endedAt: (r.ended_at as string) ?? null,
     evaluation: fromJson(r.evaluation),
     integrity: fromJson(r.integrity),
-    hasRecording: fs.existsSync(recordingPath(id)),
+    recordingSegments: listRecordingSegments(id),
+    hasRecording: listRecordingSegments(id).length > 0,
     generatedBy: (r.generated_by as Interview["generatedBy"]) ?? null,
   };
 }
@@ -130,7 +131,7 @@ export function deleteInterview(id: string): void {
   for (const e of listProctorEvents(id)) {
     if (e.snapshot) fs.rmSync(path.join(SNAPSHOT_DIR, e.snapshot), { force: true });
   }
-  fs.rmSync(recordingPath(id), { force: true });
+  for (const segment of listRecordingSegments(id)) fs.rmSync(recordingPath(id, segment), { force: true });
   db().prepare("DELETE FROM interviews WHERE id = ?").run(id);
 }
 
@@ -193,8 +194,38 @@ export function saveSnapshot(dataUrl: string): string | null {
 
 /* ---------------------------- recording ---------------------------- */
 
-export function recordingPath(interviewId: string): string {
-  return path.join(RECORDING_DIR, `${interviewId}.webm`);
+/** Recordings are stored in parts: a new part starts whenever the camera reconnects or the interview resumes. */
+export function recordingPath(interviewId: string, segment = 1): string {
+  return path.join(RECORDING_DIR, segment === 1 ? `${interviewId}.webm` : `${interviewId}.part${segment}.webm`);
+}
+
+export function listRecordingSegments(interviewId: string): number[] {
+  if (!fs.existsSync(RECORDING_DIR)) return [];
+  const escaped = interviewId.replace(/[-]/g, "\\-");
+  const re = new RegExp(`^${escaped}(?:\\.part(\\d+))?\\.webm$`);
+  return fs
+    .readdirSync(RECORDING_DIR)
+    .map((f) => re.exec(f))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => (m[1] ? Number(m[1]) : 1))
+    .sort((a, b) => a - b);
+}
+
+/* --------------------------- camera presence --------------------------- */
+
+/** How recently the browser must have confirmed a live camera for answers to be accepted. */
+export const CAMERA_HEARTBEAT_MAX_AGE_MS = 15_000;
+
+export function setCameraPresence(interviewId: string, cameraOn: boolean): void {
+  db()
+    .prepare("UPDATE interviews SET last_camera_at = ? WHERE id = ?")
+    .run(cameraOn ? new Date().toISOString() : null, interviewId);
+}
+
+export function isCameraLive(interviewId: string, now = Date.now()): boolean {
+  const row = db().prepare("SELECT last_camera_at FROM interviews WHERE id = ?").get(interviewId);
+  const at = typeof row?.last_camera_at === "string" ? Date.parse(row.last_camera_at) : NaN;
+  return Number.isFinite(at) && now - at <= CAMERA_HEARTBEAT_MAX_AGE_MS;
 }
 
 /* ------------------------------ coach ------------------------------ */

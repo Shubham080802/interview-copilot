@@ -128,6 +128,7 @@ export interface Interview {
   evaluation: Evaluation | null;
   integrity: IntegrityReport | null;
   hasRecording: boolean;
+  recordingSegments: number[];
   generatedBy: "ai" | "demo" | null;
 }
 

@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS insights (
 );
 `;
 
+let migrated = false;
 const globalForDb = globalThis as unknown as { __interviewDb?: DatabaseSync };
 
 export function db(): DatabaseSync {
@@ -66,7 +67,18 @@ export function db(): DatabaseSync {
     recoverInterruptedTasks(conn);
     globalForDb.__interviewDb = conn;
   }
+  // The connection survives dev hot reloads, so apply migrations once per loaded module version.
+  if (!migrated) {
+    migrate(globalForDb.__interviewDb);
+    migrated = true;
+  }
   return globalForDb.__interviewDb;
+}
+
+/** Adds columns introduced after the first release to existing databases. */
+function migrate(conn: DatabaseSync) {
+  const columns = new Set(conn.prepare("PRAGMA table_info(interviews)").all().map((c) => c.name as string));
+  if (!columns.has("last_camera_at")) conn.exec("ALTER TABLE interviews ADD COLUMN last_camera_at TEXT");
 }
 
 /**

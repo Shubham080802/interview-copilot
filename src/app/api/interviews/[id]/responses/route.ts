@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { fail, loadInterview, type IdParams } from "@/lib/api";
+import { cameraRequired, fail, loadInterview, type IdParams } from "@/lib/api";
+import { isCameraLive } from "@/lib/repo";
 import { ROUND_TYPES } from "@/lib/schemas";
 import { recordAnswer } from "@/lib/service";
 import { countFillers, wordsPerMinute } from "@/lib/speech-metrics";
@@ -28,6 +29,7 @@ export async function POST(req: Request, ctx: IdParams) {
   const interview = await loadInterview(ctx);
   if (!interview) return fail("Interview not found", 404);
   if (interview.status !== "in_progress") return fail("Interview is not in progress");
+  if (!isCameraLive(interview.id)) return cameraRequired();
   const parsed = AnswerInput.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return fail("Invalid answer payload");
 
