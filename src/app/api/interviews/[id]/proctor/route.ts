@@ -19,7 +19,7 @@ export async function POST(req: Request, ctx: IdParams) {
   const parsed = z.array(EventInput).max(50).safeParse(await req.json().catch(() => null));
   if (!parsed.success) return fail("Invalid proctoring payload");
   for (const e of parsed.data) {
-    addProctorEvent({ ...e, interviewId: interview.id, snapshot: e.snapshot ? saveSnapshot(e.snapshot) : null });
+    await addProctorEvent({ ...e, interviewId: interview.id, snapshot: e.snapshot ? await saveSnapshot(e.snapshot) : null });
   }
   return NextResponse.json({ ok: true });
 }

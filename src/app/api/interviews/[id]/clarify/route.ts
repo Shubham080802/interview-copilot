@@ -4,6 +4,9 @@ import { cameraRequired, fail, loadInterview, type IdParams } from "@/lib/api";
 import { isCameraLive } from "@/lib/repo";
 import { clarify, MAX_CLARIFICATIONS } from "@/lib/service";
 
+// AI calls and background preparation/evaluation can take minutes on hosted platforms.
+export const maxDuration = 300;
+
 const ClarifyInput = z.object({
   questionId: z.string().max(80),
   prompt: z.string().max(4000),
@@ -18,7 +21,7 @@ export async function POST(req: Request, ctx: IdParams) {
   const interview = await loadInterview(ctx);
   if (!interview) return fail("Interview not found", 404);
   if (interview.status !== "in_progress") return fail("Interview is not in progress");
-  if (!isCameraLive(interview.id)) return cameraRequired();
+  if (!await isCameraLive(interview.id)) return cameraRequired();
   const parsed = ClarifyInput.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return fail("Type or speak your question first");
   if (parsed.data.previous.length >= MAX_CLARIFICATIONS) return fail(`You can ask up to ${MAX_CLARIFICATIONS} clarifying questions per question.`);

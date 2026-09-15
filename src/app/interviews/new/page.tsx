@@ -6,8 +6,8 @@ import { NewInterviewForm } from "./NewInterviewForm";
 
 export const dynamic = "force-dynamic";
 
-export default function NewInterviewPage() {
-  const insights = getInsights();
+export default async function NewInterviewPage() {
+  const insights = await getInsights();
   return (
     <AppShell>
       <div className="mx-auto max-w-4xl">

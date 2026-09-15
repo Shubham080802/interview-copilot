@@ -210,7 +210,8 @@ export function basicJobPosting(job: ScrapedJob): JobPosting {
 /*  Resume files                                                       */
 /* ------------------------------------------------------------------ */
 
-export const MAX_RESUME_BYTES = 10 * 1024 * 1024;
+// Hosted request bodies are capped (~4.5 MB on Vercel).
+export const MAX_RESUME_BYTES = 4 * 1024 * 1024;
 
 export async function extractPdfText(data: Uint8Array): Promise<string> {
   const { extractText, getDocumentProxy } = await import("unpdf");

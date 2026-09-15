@@ -1,4 +1,5 @@
 import "server-only";
+import { after } from "next/server";
 import { aiEnabled, describeError } from "./ai/client";
 import * as ai from "./ai/engine";
 import * as demo from "./demo";
@@ -11,33 +12,45 @@ import { createZoomMeeting, zoomConfigured } from "./zoom";
 
 const running = new Set<string>();
 
+/**
+ * Keeps a background task alive after the HTTP response. On serverless hosts (Vercel) the function
+ * would otherwise be frozen once the response is sent; locally and in tests the promise just runs.
+ */
+function runInBackground(task: Promise<unknown>) {
+  try {
+    after(() => task);
+  } catch {
+    // Not inside a request (e.g. tests) — the task is already running.
+  }
+}
+
 /** Research the company, then build the question plan. Runs in the background; the UI polls status. */
 export function startPreparation(id: string, forceDemo = false): void {
   if (running.has(id)) return;
   running.add(id);
-  prepare(id, forceDemo).finally(() => running.delete(id));
+  runInBackground(prepare(id, forceDemo).finally(() => running.delete(id)));
 }
 
 async function prepare(id: string, forceDemo: boolean) {
-  const interview = repo.getInterview(id);
+  const interview = await repo.getInterview(id);
   if (!interview) return;
   const { config } = interview;
   const useAI = aiEnabled() && !forceDemo;
-  repo.updateInterview(id, { status: "preparing", error: null, prepStage: "Loading your interview history" });
+  await repo.updateInterview(id, { status: "preparing", error: null, prepStage: "Loading your interview history" });
 
   try {
-    const profile = repo.getProfile();
-    const insights = repo.getInsights();
-    const past = repo.pastQuestionHistory(id);
+    const profile = await repo.getProfile();
+    const insights = await repo.getInsights();
+    const past = await repo.pastQuestionHistory(id);
 
     // Zoom meeting (non-fatal if it fails)
     if (config.zoomMode === "manual" && config.zoomUrl) {
-      repo.updateInterview(id, { zoom: { joinUrl: config.zoomUrl, source: "manual" } });
+      await repo.updateInterview(id, { zoom: { joinUrl: config.zoomUrl, source: "manual" } });
     } else if (config.zoomMode === "auto" && zoomConfigured() && !interview.zoom) {
-      repo.updateInterview(id, { prepStage: "Creating Zoom meeting" });
+      await repo.updateInterview(id, { prepStage: "Creating Zoom meeting" });
       try {
         const zoom = await createZoomMeeting(`Mock interview — ${config.role} at ${config.company}`, config.scheduledAt || undefined);
-        repo.updateInterview(id, { zoom });
+        await repo.updateInterview(id, { zoom });
       } catch (err) {
         console.warn("[zoom]", err);
       }
@@ -45,27 +58,27 @@ async function prepare(id: string, forceDemo: boolean) {
 
     let research = interview.research;
     if (useAI && config.researchCompany && !research) {
-      repo.updateInterview(id, { prepStage: `Researching ${config.company}'s current work on the web` });
+      await repo.updateInterview(id, { prepStage: `Researching ${config.company}'s current work on the web` });
       try {
         research = await ai.researchCompany(config);
-        repo.updateInterview(id, { research });
+        await repo.updateInterview(id, { research });
       } catch (err) {
         // Research is an enhancement — continue with the user's own notes if it fails.
         console.warn("[research]", describeError(err));
       }
     }
 
-    repo.updateInterview(id, {
+    await repo.updateInterview(id, {
       prepStage: useAI ? "Designing your personalised questions" : "Building questions from the demo bank",
     });
     const plan = useAI
       ? await ai.generatePlan({ config, profile, research, insights, pastQuestions: past })
       : demo.demoPlan(config, insights, past.map((p) => p.prompt));
 
-    repo.updateInterview(id, { plan, status: "ready", prepStage: "Ready", generatedBy: useAI ? "ai" : "demo" });
+    await repo.updateInterview(id, { plan, status: "ready", prepStage: "Ready", generatedBy: useAI ? "ai" : "demo" });
   } catch (err) {
     console.error("[prepare]", err);
-    repo.updateInterview(id, { status: "failed", error: describeError(err), prepStage: "Failed" });
+    await repo.updateInterview(id, { status: "failed", error: describeError(err), prepStage: "Failed" });
   }
 }
 
@@ -74,7 +87,7 @@ export async function recordAnswer(
   interview: Interview,
   input: Omit<InterviewResponse, "id" | "retries" | "interviewId">,
 ) {
-  const response = repo.addResponse({ ...input, interviewId: interview.id });
+  const response = await repo.addResponse({ ...input, interviewId: interview.id });
   const question = interview.plan?.rounds.flatMap((r) => r.questions).find((q) => q.id === input.questionId) ?? null;
 
   if (input.skipped) {
@@ -103,17 +116,17 @@ export async function recordAnswer(
 export function startEvaluation(id: string): void {
   if (running.has(id)) return;
   running.add(id);
-  evaluate(id).finally(() => running.delete(id));
+  runInBackground(evaluate(id).finally(() => running.delete(id)));
 }
 
 async function evaluate(id: string) {
-  const interview = repo.getInterview(id);
+  const interview = await repo.getInterview(id);
   if (!interview) return;
-  const responses = repo.listResponses(id);
-  const integrity = computeIntegrity(repo.listProctorEvents(id));
-  repo.updateInterview(id, { status: "evaluating", integrity, error: null, endedAt: interview.endedAt ?? new Date().toISOString() });
+  const responses = await repo.listResponses(id);
+  const integrity = computeIntegrity(await repo.listProctorEvents(id));
+  await repo.updateInterview(id, { status: "evaluating", integrity, error: null, endedAt: interview.endedAt ?? new Date().toISOString() });
   const useAI = interview.generatedBy === "ai" && aiEnabled();
-  const insights = repo.getInsights();
+  const insights = await repo.getInsights();
 
   // Nothing answered: record an empty result without AI calls or touching the long-term profile.
   if (!responses.some((r) => !r.skipped)) {
@@ -122,7 +135,7 @@ async function evaluate(id: string) {
     overall.summary = "No answers were given, so there is nothing to evaluate. Start a new interview when you're ready.";
     overall.action_plan = [];
     overall.updated_profile = insights;
-    repo.updateInterview(id, {
+    await repo.updateInterview(id, {
       evaluation: { rounds: [], overall, generatedBy: "demo", generatedAt: new Date().toISOString() },
       status: "completed",
     });
@@ -131,7 +144,7 @@ async function evaluate(id: string) {
 
   try {
     const roundTypes = [...new Set(responses.map((r) => r.roundType))] as RoundType[];
-    const refreshed = repo.getInterview(id)!;
+    const refreshed = (await repo.getInterview(id))!;
     const rounds = await Promise.all(
       roundTypes.map((type) => {
         const rs = responses.filter((r) => r.roundType === type);
@@ -143,11 +156,11 @@ async function evaluate(id: string) {
       : demo.demoEvaluateOverall(rounds, responses, insights, integrity);
 
     const evaluation: Evaluation = { rounds, overall, generatedBy: useAI ? "ai" : "demo", generatedAt: new Date().toISOString() };
-    repo.updateInterview(id, { evaluation, status: "completed" });
+    await repo.updateInterview(id, { evaluation, status: "completed" });
 
     // Persist the learning into the long-term candidate profile used for future interviews.
     const alreadyCounted = interview.evaluation !== null;
-    repo.saveInsights({
+    await repo.saveInsights({
       ...insights,
       ...overall.updated_profile,
       nextFocus: overall.next_interview_focus,
@@ -156,7 +169,7 @@ async function evaluate(id: string) {
     });
   } catch (err) {
     console.error("[evaluate]", err);
-    repo.updateInterview(id, { status: "failed", error: `Evaluation failed: ${describeError(err)}` });
+    await repo.updateInterview(id, { status: "failed", error: `Evaluation failed: ${describeError(err)}` });
   }
 }
 
@@ -168,20 +181,19 @@ export async function retryAnswer(interview: Interview, response: InterviewRespo
       ? await ai.evaluateRetry({ interview, response, question, previousScore: previous?.score ?? null, answerText, code })
       : demo.demoRetry(previous?.score ?? null, `${answerText} ${code}`, question?.rubric ?? []);
   response.retries.push({ at: new Date().toISOString(), answerText, code, result });
-  repo.saveResponse(response);
+  await repo.saveResponse(response);
   return result;
 }
 
 export async function studyPlan() {
-  const insights = repo.getInsights();
-  const recent = repo
-    .listInterviews()
+  const insights = await repo.getInsights();
+  const recent = (await repo.listInterviews())
     .filter((i) => i.status === "completed")
     .slice(0, 5)
     .map((i) => `- ${i.role} at ${i.company}: ${i.overallScore ?? "?"}/100`)
     .join("\n");
   const plan = aiEnabled() ? await ai.generateStudyPlan(insights, recent || "none") : demo.demoStudyPlan(insights);
-  repo.saveInsights({ ...insights, studyPlan: plan });
+  await repo.saveInsights({ ...insights, studyPlan: plan });
   return plan;
 }
 

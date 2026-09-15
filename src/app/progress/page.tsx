@@ -7,13 +7,13 @@ import { StudyPlanPanel } from "./StudyPlanPanel";
 
 export const dynamic = "force-dynamic";
 
-export default function ProgressPage() {
-  const insights = getInsights();
-  const completed = listInterviews().filter((i) => i.overallScore !== null).reverse(); // oldest first
+export default async function ProgressPage() {
+  const insights = await getInsights();
+  const completed = (await listInterviews()).filter((i) => i.overallScore !== null).reverse(); // oldest first
 
   const roundScores = new Map<RoundType, number[]>();
   for (const s of completed) {
-    getInterview(s.id)?.evaluation?.rounds.forEach((r) => roundScores.set(r.round_type, [...(roundScores.get(r.round_type) ?? []), r.round_score]));
+    (await getInterview(s.id))?.evaluation?.rounds.forEach((r) => roundScores.set(r.round_type, [...(roundScores.get(r.round_type) ?? []), r.round_score]));
   }
 
   return (

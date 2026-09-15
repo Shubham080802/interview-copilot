@@ -74,7 +74,7 @@ export function ProfileForm({ initial }: { initial: Profile }) {
       >
         <div>
           <div className="text-sm font-medium">Import your resume</div>
-          <div className="text-xs text-slate-500">PDF, .txt or .md up to 10 MB — drop it here or choose a file. Fields below are filled in for you to review.</div>
+          <div className="text-xs text-slate-500">PDF, .txt or .md up to 4 MB — drop it here or choose a file. Fields below are filled in for you to review.</div>
         </div>
         <input ref={fileRef} type="file" accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown" className="hidden" onChange={(e) => e.target.files?.[0] && importResume(e.target.files[0])} />
         <Button variant="secondary" onClick={() => fileRef.current?.click()} disabled={importing}>

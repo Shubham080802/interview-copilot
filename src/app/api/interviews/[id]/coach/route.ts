@@ -6,16 +6,19 @@ import { fail, loadInterview, type IdParams } from "@/lib/api";
 import { demoCoachReply } from "@/lib/demo";
 import { addCoachMessage, clearCoachMessages, listCoachMessages, listResponses } from "@/lib/repo";
 
+// AI calls and background preparation/evaluation can take minutes on hosted platforms.
+export const maxDuration = 300;
+
 export async function GET(_req: Request, ctx: IdParams) {
   const interview = await loadInterview(ctx);
   if (!interview) return fail("Interview not found", 404);
-  return NextResponse.json(listCoachMessages(interview.id));
+  return NextResponse.json(await listCoachMessages(interview.id));
 }
 
 export async function DELETE(_req: Request, ctx: IdParams) {
   const interview = await loadInterview(ctx);
   if (!interview) return fail("Interview not found", 404);
-  clearCoachMessages(interview.id);
+  await clearCoachMessages(interview.id);
   return NextResponse.json({ ok: true });
 }
 
@@ -26,8 +29,8 @@ export async function POST(req: Request, ctx: IdParams) {
   const parsed = z.object({ message: z.string().trim().min(1).max(8000) }).safeParse(await req.json().catch(() => null));
   if (!parsed.success) return fail("Message is required");
 
-  addCoachMessage(interview.id, "user", parsed.data.message);
-  const history = listCoachMessages(interview.id);
+  await addCoachMessage(interview.id, "user", parsed.data.message);
+  const history = await listCoachMessages(interview.id);
   const encoder = new TextEncoder();
 
   const body = new ReadableStream({
@@ -35,7 +38,7 @@ export async function POST(req: Request, ctx: IdParams) {
       let reply = "";
       try {
         if (interview.generatedBy === "ai" && aiEnabled()) {
-          for await (const chunk of streamCoachReply(interview, listResponses(interview.id), history)) {
+          for await (const chunk of streamCoachReply(interview, await listResponses(interview.id), history)) {
             reply += chunk;
             controller.enqueue(encoder.encode(chunk));
           }
@@ -48,7 +51,7 @@ export async function POST(req: Request, ctx: IdParams) {
         reply += msg;
         controller.enqueue(encoder.encode(msg));
       } finally {
-        if (reply) addCoachMessage(interview.id, "assistant", reply);
+        if (reply) await addCoachMessage(interview.id, "assistant", reply);
         controller.close();
       }
     },

@@ -13,5 +13,5 @@ export const cameraRequired = () => NextResponse.json({ error: CAMERA_REQUIRED_M
 
 export async function loadInterview(ctx: IdParams) {
   const { id } = await ctx.params;
-  return getInterview(id);
+  return await getInterview(id);
 }

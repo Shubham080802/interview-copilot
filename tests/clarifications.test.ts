@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { demoClarification } from "@/lib/demo";
 import { toMarkdown } from "@/lib/export";
 import * as repo from "@/lib/repo";
 import { clarify, recordAnswer, startEvaluation, startPreparation } from "@/lib/service";
-import { answer, config } from "./helpers";
+import { answer, config, waitForStatus } from "./helpers";
 
 describe("clarifying questions", () => {
   it("answers scope questions but won't hand over the solution", () => {
@@ -14,11 +14,11 @@ describe("clarifying questions", () => {
   });
 
   it("are stored with the answer, credited in scoring and included in the report", async () => {
-    const interview = repo.createInterview(config({ rounds: ["coding"], questionsPerRound: 1 }));
+    const interview = await repo.createInterview(config({ rounds: ["coding"], questionsPerRound: 1 }));
     startPreparation(interview.id);
-    await vi.waitFor(() => expect(repo.getInterview(interview.id)?.status).toBe("ready"), { timeout: 5000, interval: 20 });
-    repo.updateInterview(interview.id, { status: "in_progress" });
-    const ready = repo.getInterview(interview.id)!;
+    await waitForStatus(interview.id, "ready");
+    await repo.updateInterview(interview.id, { status: "in_progress" });
+    const ready = (await repo.getInterview(interview.id))!;
     const q = ready.plan!.rounds[0].questions[0];
 
     const reply = await clarify(ready, { questionId: q.id, prompt: q.prompt, candidateQuestion: "Is the input sorted?", previous: [] });
@@ -27,14 +27,14 @@ describe("clarifying questions", () => {
 
     await recordAnswer(ready, answer({ questionId: q.id, roundType: "coding", prompt: q.prompt, answerText: q.rubric.join(". "), clarifications: [clarification] }));
     startEvaluation(interview.id);
-    await vi.waitFor(() => expect(repo.getInterview(interview.id)?.status).toBe("completed"), { timeout: 5000, interval: 20 });
+    await waitForStatus(interview.id, "completed");
 
-    const [response] = repo.listResponses(interview.id);
+    const [response] = await repo.listResponses(interview.id);
     expect(response.clarifications).toEqual([clarification]);
-    const evaluation = repo.getInterview(interview.id)!.evaluation!.rounds[0].question_evaluations[0];
+    const evaluation = (await repo.getInterview(interview.id))!.evaluation!.rounds[0].question_evaluations[0];
     expect(evaluation.strengths).toContain("Asked clarifying questions before answering");
 
-    const md = toMarkdown({ exportedAt: "", interview: repo.getInterview(interview.id)!, responses: [response], proctorEvents: [], coachSession: [] });
+    const md = toMarkdown({ exportedAt: "", interview: (await repo.getInterview(interview.id))!, responses: [response], proctorEvents: [], coachSession: [] });
     expect(md).toContain("**Clarifying questions**");
     expect(md).toContain("Is the input sorted?");
   });

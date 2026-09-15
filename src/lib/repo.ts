@@ -1,9 +1,8 @@
 import "server-only";
-import fs from "node:fs";
-import path from "node:path";
 import { nanoid } from "nanoid";
-import { db, fromJson, RECORDING_DIR, SNAPSHOT_DIR, toJson } from "./db";
 import type { InterviewConfig } from "./schemas";
+import { storage } from "./storage";
+import { fromJson, toJson, type Row } from "./storage/sql";
 import type {
   CoachMessage,
   Interview,
@@ -19,31 +18,29 @@ const now = () => new Date().toISOString();
 const ID_RE = /^[A-Za-z0-9_-]{6,40}$/;
 export const isValidId = (id: string) => ID_RE.test(id);
 
+const sql = async () => (await storage()).sql;
+const files = async () => (await storage()).files;
+
 /* ----------------------------- profile ----------------------------- */
 
 const DEFAULT_PROFILE: Profile = { name: "", headline: "", experienceYears: 0, resume: "", updatedAt: "" };
 
-export function getProfile(): Profile {
-  const row = db().prepare("SELECT data FROM profile WHERE id = 1").get();
+export async function getProfile(): Promise<Profile> {
+  const row = await (await sql()).get("SELECT data FROM profile WHERE id = 1");
   return { ...DEFAULT_PROFILE, ...(fromJson<Profile>(row?.data) ?? {}) };
 }
 
-export function saveProfile(p: Omit<Profile, "updatedAt">): Profile {
+export async function saveProfile(p: Omit<Profile, "updatedAt">): Promise<Profile> {
   const profile = { ...p, updatedAt: now() };
-  db()
-    .prepare("INSERT INTO profile (id, data) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data")
-    .run(JSON.stringify(profile));
+  await (await sql()).run("INSERT INTO profile (id, data) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data", [JSON.stringify(profile)]);
   return profile;
 }
 
 /* ---------------------------- interviews --------------------------- */
 
-type Row = Record<string, unknown>;
-
-function rowToInterview(r: Row): Interview {
-  const id = r.id as string;
+function rowToInterview(r: Row, recordingSegments: number[]): Interview {
   return {
-    id,
+    id: r.id as string,
     createdAt: r.created_at as string,
     status: r.status as InterviewStatus,
     prepStage: (r.prep_stage as string) ?? "",
@@ -56,24 +53,27 @@ function rowToInterview(r: Row): Interview {
     endedAt: (r.ended_at as string) ?? null,
     evaluation: fromJson(r.evaluation),
     integrity: fromJson(r.integrity),
-    recordingSegments: listRecordingSegments(id),
-    hasRecording: listRecordingSegments(id).length > 0,
+    recordingSegments,
+    hasRecording: recordingSegments.length > 0,
     generatedBy: (r.generated_by as Interview["generatedBy"]) ?? null,
   };
 }
 
-export function createInterview(config: InterviewConfig): Interview {
+export async function createInterview(config: InterviewConfig): Promise<Interview> {
   const id = nanoid(12);
-  db()
-    .prepare("INSERT INTO interviews (id, created_at, status, prep_stage, config) VALUES (?, ?, 'preparing', 'Queued', ?)")
-    .run(id, now(), JSON.stringify(config));
-  return getInterview(id)!;
+  const at = now();
+  await (await sql()).run(
+    "INSERT INTO interviews (id, created_at, updated_at, status, prep_stage, config) VALUES (?, ?, ?, 'preparing', 'Queued', ?)",
+    [id, at, at, JSON.stringify(config)],
+  );
+  return (await getInterview(id))!;
 }
 
-export function getInterview(id: string): Interview | null {
+export async function getInterview(id: string): Promise<Interview | null> {
   if (!isValidId(id)) return null;
-  const row = db().prepare("SELECT * FROM interviews WHERE id = ?").get(id);
-  return row ? rowToInterview(row) : null;
+  const row = await (await sql()).get("SELECT * FROM interviews WHERE id = ?", [id]);
+  if (!row) return null;
+  return rowToInterview(row, await (await files()).listRecordingSegments(id));
 }
 
 const COLUMN_MAP = {
@@ -91,26 +91,22 @@ const COLUMN_MAP = {
 } as const;
 const JSON_FIELDS = new Set(["research", "plan", "zoom", "evaluation", "integrity"]);
 
-export function updateInterview(
-  id: string,
-  patch: Partial<Pick<Interview, keyof typeof COLUMN_MAP>>,
-): void {
-  const sets: string[] = [];
-  const values: (string | null)[] = [];
+export async function updateInterview(id: string, patch: Partial<Pick<Interview, keyof typeof COLUMN_MAP>>): Promise<void> {
+  const sets: string[] = ["updated_at = ?"];
+  const values: (string | null)[] = [now()];
   for (const [key, value] of Object.entries(patch)) {
     const col = COLUMN_MAP[key as keyof typeof COLUMN_MAP];
     if (!col) continue;
     sets.push(`${col} = ?`);
     values.push(JSON_FIELDS.has(key) ? toJson(value) : ((value as string | null) ?? null));
   }
-  if (!sets.length) return;
-  db().prepare(`UPDATE interviews SET ${sets.join(", ")} WHERE id = ?`).run(...values, id);
+  await (await sql()).run(`UPDATE interviews SET ${sets.join(", ")} WHERE id = ?`, [...values, id]);
 }
 
-export function listInterviews(): InterviewSummary[] {
-  const rows = db().prepare("SELECT * FROM interviews ORDER BY created_at DESC").all();
+export async function listInterviews(): Promise<InterviewSummary[]> {
+  const rows = await (await sql()).all("SELECT * FROM interviews ORDER BY created_at DESC");
   return rows.map((r) => {
-    const i = rowToInterview(r);
+    const i = rowToInterview(r, []);
     return {
       id: i.id,
       createdAt: i.createdAt,
@@ -126,89 +122,85 @@ export function listInterviews(): InterviewSummary[] {
   });
 }
 
-export function deleteInterview(id: string): void {
+export async function deleteInterview(id: string): Promise<void> {
   if (!isValidId(id)) return;
-  for (const e of listProctorEvents(id)) {
-    if (e.snapshot) fs.rmSync(path.join(SNAPSHOT_DIR, e.snapshot), { force: true });
+  const store = await files();
+  for (const e of await listProctorEvents(id)) {
+    if (e.snapshot) await store.deleteSnapshot(e.snapshot);
   }
-  for (const segment of listRecordingSegments(id)) fs.rmSync(recordingPath(id, segment), { force: true });
-  db().prepare("DELETE FROM interviews WHERE id = ?").run(id);
+  await store.deleteRecordings(id);
+  const db = await sql();
+  // Explicit child deletes: SQLite only cascades with foreign keys enabled on the connection.
+  for (const table of ["responses", "proctor_events", "coach_messages"]) await db.run(`DELETE FROM ${table} WHERE interview_id = ?`, [id]);
+  await db.run("DELETE FROM interviews WHERE id = ?", [id]);
 }
 
 /* ---------------------------- responses ---------------------------- */
 
-export function addResponse(r: Omit<InterviewResponse, "id" | "retries">): InterviewResponse {
+export async function addResponse(r: Omit<InterviewResponse, "id" | "retries">): Promise<InterviewResponse> {
   const response: InterviewResponse = { ...r, id: nanoid(12), retries: [] };
-  const seqRow = db()
-    .prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM responses WHERE interview_id = ?")
-    .get(r.interviewId);
-  db()
-    .prepare("INSERT INTO responses (id, interview_id, seq, data) VALUES (?, ?, ?, ?)")
-    .run(response.id, r.interviewId, Number(seqRow?.next ?? 1), JSON.stringify(response));
+  await (await sql()).run(
+    `INSERT INTO responses (id, interview_id, seq, data)
+     SELECT CAST(? AS TEXT), CAST(? AS TEXT), COALESCE(MAX(seq), 0) + 1, CAST(? AS TEXT) FROM responses WHERE interview_id = ?`,
+    [response.id, r.interviewId, JSON.stringify(response), r.interviewId],
+  );
   return response;
 }
 
-export function listResponses(interviewId: string): InterviewResponse[] {
-  return db()
-    .prepare("SELECT data FROM responses WHERE interview_id = ? ORDER BY seq")
-    .all(interviewId)
-    .map((row) => fromJson<InterviewResponse>(row.data)!);
+export async function listResponses(interviewId: string): Promise<InterviewResponse[]> {
+  const rows = await (await sql()).all("SELECT data FROM responses WHERE interview_id = ? ORDER BY seq", [interviewId]);
+  return rows.map((row) => fromJson<InterviewResponse>(row.data)!);
 }
 
-export function getResponse(id: string): InterviewResponse | null {
+export async function getResponse(id: string): Promise<InterviewResponse | null> {
   if (!isValidId(id)) return null;
-  const row = db().prepare("SELECT data FROM responses WHERE id = ?").get(id);
+  const row = await (await sql()).get("SELECT data FROM responses WHERE id = ?", [id]);
   return fromJson<InterviewResponse>(row?.data);
 }
 
-export function saveResponse(r: InterviewResponse): void {
-  db().prepare("UPDATE responses SET data = ? WHERE id = ?").run(JSON.stringify(r), r.id);
+export async function saveResponse(r: InterviewResponse): Promise<void> {
+  await (await sql()).run("UPDATE responses SET data = ? WHERE id = ?", [JSON.stringify(r), r.id]);
 }
 
 /* ------------------------- proctor events -------------------------- */
 
-export function addProctorEvent(e: Omit<ProctorEvent, "id">): ProctorEvent {
+export async function addProctorEvent(e: Omit<ProctorEvent, "id">): Promise<ProctorEvent> {
   const event: ProctorEvent = { ...e, id: nanoid(12) };
-  db()
-    .prepare("INSERT INTO proctor_events (id, interview_id, at, data) VALUES (?, ?, ?, ?)")
-    .run(event.id, e.interviewId, e.at, JSON.stringify(event));
+  await (await sql()).run("INSERT INTO proctor_events (id, interview_id, at, data) VALUES (?, ?, ?, ?)", [event.id, e.interviewId, e.at, JSON.stringify(event)]);
   return event;
 }
 
-export function listProctorEvents(interviewId: string): ProctorEvent[] {
-  return db()
-    .prepare("SELECT data FROM proctor_events WHERE interview_id = ? ORDER BY at")
-    .all(interviewId)
-    .map((row) => fromJson<ProctorEvent>(row.data)!);
+export async function listProctorEvents(interviewId: string): Promise<ProctorEvent[]> {
+  const rows = await (await sql()).all("SELECT data FROM proctor_events WHERE interview_id = ? ORDER BY at", [interviewId]);
+  return rows.map((row) => fromJson<ProctorEvent>(row.data)!);
 }
 
-export function saveSnapshot(dataUrl: string): string | null {
+export const SNAPSHOT_NAME_RE = /^[A-Za-z0-9_-]{16}\.jpg$/;
+
+export async function saveSnapshot(dataUrl: string): Promise<string | null> {
   const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
   if (!match) return null;
   const buf = Buffer.from(match[1], "base64");
   if (buf.length > 400_000) return null;
   const name = `${nanoid(16)}.jpg`;
-  fs.writeFileSync(path.join(SNAPSHOT_DIR, name), buf);
+  await (await files()).putSnapshot(name, buf);
   return name;
+}
+
+export async function getSnapshot(name: string): Promise<Uint8Array | null> {
+  if (!SNAPSHOT_NAME_RE.test(name)) return null;
+  return (await files()).getSnapshot(name);
 }
 
 /* ---------------------------- recording ---------------------------- */
 
 /** Recordings are stored in parts: a new part starts whenever the camera reconnects or the interview resumes. */
-export function recordingPath(interviewId: string, segment = 1): string {
-  return path.join(RECORDING_DIR, segment === 1 ? `${interviewId}.webm` : `${interviewId}.part${segment}.webm`);
+export async function appendRecordingChunk(interviewId: string, segment: number, seq: number, data: Uint8Array) {
+  await (await files()).appendRecordingChunk(interviewId, segment, seq, data);
 }
 
-export function listRecordingSegments(interviewId: string): number[] {
-  if (!fs.existsSync(RECORDING_DIR)) return [];
-  const escaped = interviewId.replace(/[-]/g, "\\-");
-  const re = new RegExp(`^${escaped}(?:\\.part(\\d+))?\\.webm$`);
-  return fs
-    .readdirSync(RECORDING_DIR)
-    .map((f) => re.exec(f))
-    .filter((m): m is RegExpExecArray => m !== null)
-    .map((m) => (m[1] ? Number(m[1]) : 1))
-    .sort((a, b) => a - b);
+export async function openRecording(interviewId: string, segment: number) {
+  return (await files()).openRecording(interviewId, segment);
 }
 
 /* --------------------------- camera presence --------------------------- */
@@ -216,40 +208,42 @@ export function listRecordingSegments(interviewId: string): number[] {
 /** How recently the browser must have confirmed a live camera for answers to be accepted. */
 export const CAMERA_HEARTBEAT_MAX_AGE_MS = 15_000;
 
-export function setCameraPresence(interviewId: string, cameraOn: boolean): void {
-  db()
-    .prepare("UPDATE interviews SET last_camera_at = ? WHERE id = ?")
-    .run(cameraOn ? new Date().toISOString() : null, interviewId);
+export async function setCameraPresence(interviewId: string, cameraOn: boolean): Promise<void> {
+  await (await sql()).run("UPDATE interviews SET last_camera_at = ? WHERE id = ?", [cameraOn ? now() : null, interviewId]);
 }
 
-export function isCameraLive(interviewId: string, now = Date.now()): boolean {
-  const row = db().prepare("SELECT last_camera_at FROM interviews WHERE id = ?").get(interviewId);
-  const at = typeof row?.last_camera_at === "string" ? Date.parse(row.last_camera_at) : NaN;
-  return Number.isFinite(at) && now - at <= CAMERA_HEARTBEAT_MAX_AGE_MS;
+export async function isCameraLive(interviewId: string, at = Date.now()): Promise<boolean> {
+  const row = await (await sql()).get("SELECT last_camera_at FROM interviews WHERE id = ?", [interviewId]);
+  const last = typeof row?.last_camera_at === "string" ? Date.parse(row.last_camera_at) : NaN;
+  return Number.isFinite(last) && at - last <= CAMERA_HEARTBEAT_MAX_AGE_MS;
 }
 
 /* ------------------------------ coach ------------------------------ */
 
-export function listCoachMessages(interviewId: string): CoachMessage[] {
-  return db()
-    .prepare("SELECT id, role, content, created_at FROM coach_messages WHERE interview_id = ? ORDER BY created_at, rowid")
-    .all(interviewId)
-    .map((r) => ({
-      id: r.id as string,
-      role: r.role as CoachMessage["role"],
-      content: r.content as string,
-      createdAt: r.created_at as string,
-    }));
+export async function listCoachMessages(interviewId: string): Promise<CoachMessage[]> {
+  const rows = await (await sql()).all(
+    "SELECT id, role, content, created_at FROM coach_messages WHERE interview_id = ? ORDER BY seq, created_at",
+    [interviewId],
+  );
+  return rows.map((r) => ({
+    id: r.id as string,
+    role: r.role as CoachMessage["role"],
+    content: r.content as string,
+    createdAt: r.created_at as string,
+  }));
 }
 
-export function addCoachMessage(interviewId: string, role: CoachMessage["role"], content: string): void {
-  db()
-    .prepare("INSERT INTO coach_messages (id, interview_id, created_at, role, content) VALUES (?, ?, ?, ?, ?)")
-    .run(nanoid(12), interviewId, now(), role, content);
+export async function addCoachMessage(interviewId: string, role: CoachMessage["role"], content: string): Promise<void> {
+  await (await sql()).run(
+    `INSERT INTO coach_messages (id, interview_id, created_at, role, content, seq)
+     SELECT CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), COALESCE(MAX(seq), 0) + 1
+     FROM coach_messages WHERE interview_id = ?`,
+    [nanoid(12), interviewId, now(), role, content, interviewId],
+  );
 }
 
-export function clearCoachMessages(interviewId: string): void {
-  db().prepare("DELETE FROM coach_messages WHERE interview_id = ?").run(interviewId);
+export async function clearCoachMessages(interviewId: string): Promise<void> {
+  await (await sql()).run("DELETE FROM coach_messages WHERE interview_id = ?", [interviewId]);
 }
 
 /* ----------------------------- insights ---------------------------- */
@@ -266,27 +260,26 @@ const EMPTY_INSIGHTS: StoredInsights = {
   studyPlan: null,
 };
 
-export function getInsights(): StoredInsights {
-  const row = db().prepare("SELECT data FROM insights WHERE id = 1").get();
+export async function getInsights(): Promise<StoredInsights> {
+  const row = await (await sql()).get("SELECT data FROM insights WHERE id = 1");
   return { ...EMPTY_INSIGHTS, ...(fromJson<StoredInsights>(row?.data) ?? {}) };
 }
 
-export function saveInsights(insights: StoredInsights): void {
-  db()
-    .prepare("INSERT INTO insights (id, data) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data")
-    .run(JSON.stringify({ ...insights, updatedAt: now() }));
+export async function saveInsights(insights: StoredInsights): Promise<void> {
+  await (await sql()).run("INSERT INTO insights (id, data) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data", [
+    JSON.stringify({ ...insights, updatedAt: now() }),
+  ]);
 }
 
 /** Questions asked in previous interviews — used to avoid repeats and to track progress. */
-export function pastQuestionHistory(excludeInterviewId?: string, limit = 60) {
-  const rows = db()
-    .prepare(
-      `SELECT r.data AS data, i.config AS config, i.evaluation AS evaluation
-       FROM responses r JOIN interviews i ON i.id = r.interview_id
-       WHERE i.status = 'completed' AND i.id != ?
-       ORDER BY i.created_at DESC, r.seq LIMIT ?`,
-    )
-    .all(excludeInterviewId ?? "", limit);
+export async function pastQuestionHistory(excludeInterviewId?: string, limit = 60) {
+  const rows = await (await sql()).all(
+    `SELECT r.data AS data, i.config AS config, i.evaluation AS evaluation
+     FROM responses r JOIN interviews i ON i.id = r.interview_id
+     WHERE i.status = 'completed' AND i.id <> ?
+     ORDER BY i.created_at DESC, r.seq LIMIT ?`,
+    [excludeInterviewId ?? "", limit],
+  );
   return rows.map((row) => {
     const resp = fromJson<InterviewResponse>(row.data)!;
     const evaluation = fromJson<Interview["evaluation"]>(row.evaluation);

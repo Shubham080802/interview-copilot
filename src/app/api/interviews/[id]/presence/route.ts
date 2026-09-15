@@ -13,6 +13,6 @@ export async function POST(req: Request, ctx: IdParams) {
   if (interview.status !== "ready" && interview.status !== "in_progress") return NextResponse.json({ ok: false });
   const parsed = z.object({ cameraOn: z.boolean() }).safeParse(await req.json().catch(() => null));
   if (!parsed.success) return fail("Invalid presence payload");
-  setCameraPresence(interview.id, parsed.data.cameraOn);
+  await setCameraPresence(interview.id, parsed.data.cameraOn);
   return NextResponse.json({ ok: true });
 }

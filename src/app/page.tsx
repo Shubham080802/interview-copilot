@@ -9,10 +9,10 @@ export const dynamic = "force-dynamic";
 
 const REC: Record<string, string> = { strong_hire: "Strong hire", hire: "Hire", lean_hire: "Lean hire", lean_no_hire: "Lean no hire", no_hire: "No hire" };
 
-export default function Dashboard() {
-  const interviews = listInterviews();
-  const insights = getInsights();
-  const profile = getProfile();
+export default async function Dashboard() {
+  const interviews = await listInterviews();
+  const insights = await getInsights();
+  const profile = await getProfile();
   const completed = interviews.filter((i) => i.overallScore !== null);
   const avg = completed.length ? Math.round(completed.reduce((s, i) => s + (i.overallScore ?? 0), 0) / completed.length) : null;
   const trend = completed.length >= 2 ? (completed[0].overallScore ?? 0) - (completed[1].overallScore ?? 0) : null;

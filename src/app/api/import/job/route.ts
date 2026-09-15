@@ -5,6 +5,9 @@ import { fail } from "@/lib/api";
 import { ImportError } from "@/lib/importers";
 import { importJobPosting } from "@/lib/service";
 
+// AI calls and background preparation/evaluation can take minutes on hosted platforms.
+export const maxDuration = 300;
+
 const JobInput = z.union([
   z.object({ url: z.string().trim().min(1).max(2000) }),
   z.object({ text: z.string().trim().min(50, "Paste the full job description").max(60_000) }),

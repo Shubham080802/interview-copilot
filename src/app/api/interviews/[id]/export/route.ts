@@ -9,9 +9,9 @@ export async function GET(req: Request, ctx: IdParams) {
   const bundle: InterviewBundle = {
     exportedAt: new Date().toISOString(),
     interview,
-    responses: listResponses(interview.id),
-    proctorEvents: listProctorEvents(interview.id),
-    coachSession: listCoachMessages(interview.id),
+    responses: await listResponses(interview.id),
+    proctorEvents: await listProctorEvents(interview.id),
+    coachSession: await listCoachMessages(interview.id),
   };
   const slug = `${interview.config.company}-${interview.config.role}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 60);
   const file = `interview-${slug}-${interview.createdAt.slice(0, 10)}`;

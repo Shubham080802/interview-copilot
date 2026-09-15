@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { fail, loadInterview, type IdParams } from "@/lib/api";
 import { startPreparation } from "@/lib/service";
 
+// AI calls and background preparation/evaluation can take minutes on hosted platforms.
+export const maxDuration = 300;
+
 /** Retry preparation (optionally forcing demo mode). */
 export async function POST(req: Request, ctx: IdParams) {
   const interview = await loadInterview(ctx);

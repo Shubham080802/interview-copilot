@@ -6,6 +6,9 @@ import { ROUND_TYPES } from "@/lib/schemas";
 import { recordAnswer } from "@/lib/service";
 import { countFillers, wordsPerMinute } from "@/lib/speech-metrics";
 
+// AI calls and background preparation/evaluation can take minutes on hosted platforms.
+export const maxDuration = 300;
+
 const AnswerInput = z.object({
   questionId: z.string().max(80),
   roundType: z.enum(ROUND_TYPES),
@@ -29,7 +32,7 @@ export async function POST(req: Request, ctx: IdParams) {
   const interview = await loadInterview(ctx);
   if (!interview) return fail("Interview not found", 404);
   if (interview.status !== "in_progress") return fail("Interview is not in progress");
-  if (!isCameraLive(interview.id)) return cameraRequired();
+  if (!await isCameraLive(interview.id)) return cameraRequired();
   const parsed = AnswerInput.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return fail("Invalid answer payload");
 

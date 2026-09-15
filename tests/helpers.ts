@@ -1,3 +1,5 @@
+import { vi, expect } from "vitest";
+import * as repo from "@/lib/repo";
 import { InterviewConfigSchema, type InterviewConfig } from "@/lib/schemas";
 import type { InterviewResponse } from "@/lib/types";
 
@@ -34,3 +36,11 @@ export function answer(overrides: Partial<InterviewResponse> = {}): Omit<Intervi
     ...overrides,
   };
 }
+
+export const waitForStatus = (id: string, status: string) =>
+  vi.waitFor(async () => expect((await repo.getInterview(id))?.status).toBe(status), { timeout: 10_000, interval: 20 });
+
+export const routeCtx = (id: string) => ({ params: Promise.resolve({ id }) });
+
+export const jsonRequest = (body: unknown) =>
+  new Request("http://test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

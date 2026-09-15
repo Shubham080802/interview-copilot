@@ -11,11 +11,11 @@ const ProfileInput = z.object({
 });
 
 export async function GET() {
-  return NextResponse.json(getProfile());
+  return NextResponse.json(await getProfile());
 }
 
 export async function PUT(req: Request) {
   const parsed = ProfileInput.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid profile");
-  return NextResponse.json(saveProfile(parsed.data));
+  return NextResponse.json(await saveProfile(parsed.data));
 }
