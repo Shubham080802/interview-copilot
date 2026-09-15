@@ -82,13 +82,22 @@ Proctoring signals are automated indicators, not proof of cheating — the repor
 
 **Network access:** `npm run dev` and `npm start` listen on `127.0.0.1` only. The app has no login, so anyone who can reach it can read your recordings and use your API key — don't expose it to a network (e.g. `-H 0.0.0.0`) without adding authentication first.
 
-## Deployment
+## Deployment (Vercel)
 
-Interview Copilot is currently built to run **locally**. Hosting it (e.g. on Vercel) needs these changes first:
+The app runs locally with SQLite and files on disk, and on Vercel with hosted storage — the switch is automatic:
 
-1. **Authentication** — there is no login, so a public URL would expose every recording and let anyone spend your API key.
-2. **Hosted storage** — SQLite, recordings and snapshots are written to the local disk; serverless platforms don't keep files between requests. Use a hosted database (e.g. Postgres) and object storage (e.g. Vercel Blob or S3).
-3. **Durable background jobs** — interview preparation and evaluation continue after the HTTP response; serverless functions are frozen at that point. Move them to a job queue or `after()`/`waitUntil` with a long enough function duration.
+| Setting | Local | Vercel |
+|---|---|---|
+| Database | `data/interviews.db` (SQLite) | Neon Postgres via `DATABASE_URL` (Vercel Marketplace) |
+| Recordings & snapshots | `data/recordings`, `data/snapshots` | Private Vercel Blob store via `BLOB_READ_WRITE_TOKEN` |
+| Background preparation / evaluation | In-process | Kept alive with `after()`, routes allow 300s |
+
+To deploy your own copy:
+
+1. `vercel link`, then create a private Blob store (`vercel blob create-store <name> --access private`) and add Neon (`vercel integration add neon`), both connected to Production and Preview.
+2. Deploy (`vercel deploy --prod`, or push to the connected Git repository).
+3. **Protect it.** The app has no login of its own. Set Vercel Authentication to cover *all* deployments including production domains (Project → Settings → Deployment Protection, or `PATCH /v9/projects/<id>` with `{"ssoProtection":{"deploymentType":"all"}}`). The default setting leaves the production `*.vercel.app` domain public.
+4. Optional: add `ANTHROPIC_API_KEY` (and Zoom variables) in the project's environment variables and redeploy to enable AI mode.
 
 ## Modules
 
