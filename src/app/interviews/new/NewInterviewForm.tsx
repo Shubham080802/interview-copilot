@@ -1,9 +1,10 @@
 "use client";
 import { useRouter } from "next/navigation";
+import { Link2, Sparkles } from "lucide-react";
 import { useState } from "react";
-import { Button, Card, cx, Field, inputClass } from "@/components/ui";
+import { Button, Card, cx, Field, inputClass, Spinner } from "@/components/ui";
 import { api } from "@/lib/client/api";
-import { ROUND_LABELS, ROUND_TYPES, type InterviewConfig, type RoundType } from "@/lib/schemas";
+import { ROUND_LABELS, ROUND_TYPES, type InterviewConfig, type JobPosting, type RoundType } from "@/lib/schemas";
 import type { Interview } from "@/lib/types";
 
 const FIELDS = ["Software Engineering", "Frontend Engineering", "Backend Engineering", "Data Science / ML", "Data Engineering", "DevOps / SRE / Cloud", "Mobile Development", "Cybersecurity", "Product Management", "UX / Product Design", "Business / Data Analyst", "QA / Test Engineering", "Consulting", "Finance", "Marketing", "Sales"];
@@ -43,6 +44,35 @@ export function NewInterviewForm({ aiEnabled, zoomConfigured }: { aiEnabled: boo
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const set = <K extends keyof InterviewConfig>(k: K, v: InterviewConfig[K]) => setC((prev) => ({ ...prev, [k]: v }));
+  const [jobUrl, setJobUrl] = useState("");
+  const [importing, setImporting] = useState<"url" | "text" | null>(null);
+  const [importNote, setImportNote] = useState<{ tone: "ok" | "warn" | "error"; text: string } | null>(null);
+
+  async function importJob(source: { url: string } | { text: string }) {
+    setImporting("url" in source ? "url" : "text");
+    setImportNote(null);
+    try {
+      const result = await api<{ data: JobPosting; method: "ai" | "basic"; warning?: string }>("/api/import/job", { method: "POST", json: source });
+      const d = result.data;
+      // Only overwrite fields the posting actually provided.
+      setC((prev) => ({
+        ...prev,
+        role: d.role || prev.role,
+        company: d.company || prev.company,
+        companyWebsite: d.company_website || prev.companyWebsite,
+        field: result.method === "ai" && d.field ? d.field : prev.field,
+        seniority: d.seniority || prev.seniority,
+        jobDescription: d.job_description || prev.jobDescription,
+        requirements: d.requirements || prev.requirements,
+        companyNotes: d.company_notes || prev.companyNotes,
+      }));
+      setImportNote(result.warning ? { tone: "warn", text: result.warning } : { tone: "ok", text: "Job details imported — review them below." });
+    } catch (err) {
+      setImportNote({ tone: "error", text: (err as Error).message });
+    } finally {
+      setImporting(null);
+    }
+  }
 
   const toggleRound = (r: RoundType) =>
     set("rounds", c.rounds.includes(r) ? c.rounds.filter((x) => x !== r) : ROUND_TYPES.filter((x) => x === r || c.rounds.includes(x)));
@@ -66,6 +96,32 @@ export function NewInterviewForm({ aiEnabled, zoomConfigured }: { aiEnabled: boo
 
   return (
     <form onSubmit={submit} className="mt-6 space-y-6">
+      <Card className="space-y-3 border-brand-200 bg-brand-50/30">
+        <div className="flex items-center gap-2 font-semibold"><Link2 className="h-4 w-4 text-brand-600" /> Import from a job posting</div>
+        <p className="text-sm text-slate-500">Paste a link to the job ad (company careers page, Greenhouse, Lever, Workday…) and we&apos;ll fill in the role, company, description and requirements.</p>
+        <div className="flex flex-wrap gap-2">
+          <input
+            type="url"
+            className={cx(inputClass, "min-w-0 flex-1")}
+            placeholder="https://boards.greenhouse.io/company/jobs/123"
+            value={jobUrl}
+            onChange={(e) => setJobUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (jobUrl.trim()) importJob({ url: jobUrl.trim() });
+              }
+            }}
+          />
+          <Button type="button" variant="secondary" disabled={!jobUrl.trim() || importing !== null} onClick={() => importJob({ url: jobUrl.trim() })}>
+            {importing === "url" ? <><Spinner /> Importing…</> : "Import"}
+          </Button>
+        </div>
+        {importNote && (
+          <div className={cx("rounded-lg px-3 py-2 text-sm", importNote.tone === "ok" ? "bg-emerald-50 text-emerald-800" : importNote.tone === "warn" ? "bg-amber-50 text-amber-800" : "bg-rose-50 text-rose-700")}>{importNote.text}</div>
+        )}
+      </Card>
+
       <Card className="space-y-5">
         <SectionTitle n={1} title="Role" />
         <div className="grid gap-4 sm:grid-cols-3">
@@ -92,6 +148,11 @@ export function NewInterviewForm({ aiEnabled, zoomConfigured }: { aiEnabled: boo
         <Field label="Job description" hint="Paste the full posting if you have it.">
           <textarea rows={6} className={inputClass} value={c.jobDescription} onChange={(e) => set("jobDescription", e.target.value)} />
         </Field>
+        {aiEnabled && c.jobDescription.trim().length >= 50 && (
+          <Button type="button" variant="ghost" className="-mt-3 text-brand-700" disabled={importing !== null} onClick={() => importJob({ text: c.jobDescription })}>
+            {importing === "text" ? <><Spinner /> Extracting…</> : <><Sparkles className="h-4 w-4" /> Fill role, requirements and company notes from this description</>}
+          </Button>
+        )}
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Key requirements / skills" hint="Comma or line separated">
             <textarea rows={4} className={inputClass} placeholder="Go, Kubernetes, distributed systems, payments" value={c.requirements} onChange={(e) => set("requirements", e.target.value)} />

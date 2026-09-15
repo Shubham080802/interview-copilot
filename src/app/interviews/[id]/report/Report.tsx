@@ -205,6 +205,19 @@ function AnswerCard({ n, response: r, evaluation: e, isCoding, interviewId, onCh
 
       {open && (
         <div className="mt-4 space-y-4 border-t border-slate-100 pt-4">
+          {r.clarifications && r.clarifications.length > 0 && (
+            <div>
+              <div className="mb-1 text-xs font-semibold uppercase text-slate-500">Clarifying questions you asked</div>
+              <div className="space-y-2 rounded-lg bg-brand-50/50 p-3 text-sm">
+                {r.clarifications.map((c, k) => (
+                  <div key={k}>
+                    <p className="text-slate-700"><strong>You:</strong> {c.question}</p>
+                    <p className="text-brand-800"><strong>Interviewer:</strong> {c.reply}{c.gaveHint && <Badge tone="amber" className="ml-2">hint given</Badge>}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div>
             <div className="mb-1 flex flex-wrap gap-3 text-xs text-slate-500">
               <span className="font-semibold uppercase">Your answer</span>

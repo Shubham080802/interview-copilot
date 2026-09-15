@@ -1,6 +1,8 @@
 "use client";
 import {
   AlertTriangle,
+  HelpCircle,
+  Send,
   Camera,
   CheckCircle2,
   Circle,
@@ -25,7 +27,7 @@ import { useMediaStream, useRecorder, useSpeaker, useSpeechRecognition } from "@
 import { useProctoring, type FaceStatus } from "@/lib/client/proctoring";
 import { useInterview } from "@/lib/client/useInterview";
 import { ROUND_LABELS, type FollowUp, type PlanQuestion, type RoundType } from "@/lib/schemas";
-import type { InterviewResponse } from "@/lib/types";
+import type { Clarification, InterviewResponse } from "@/lib/types";
 
 type Phase = "setup" | "intro" | "question" | "submitting" | "reacting" | "closing";
 
@@ -67,6 +69,11 @@ export function InterviewRoom({ id }: { id: string }) {
   const [autoListen, setAutoListen] = useState(true);
   const [answeredCount, setAnsweredCount] = useState(0);
   const [actionError, setActionError] = useState("");
+  const [clarifications, setClarifications] = useState<Clarification[]>([]);
+  const [askOpen, setAskOpen] = useState(false);
+  const [askText, setAskText] = useState("");
+  const [asking, setAsking] = useState(false);
+  const srTarget = useRef<"answer" | "ask">("answer");
   const turnRef = useRef<Turn | null>(null);
   turnRef.current = turn;
 
@@ -81,7 +88,11 @@ export function InterviewRoom({ id }: { id: string }) {
   );
 
   const sr = useSpeechRecognition(
-    useCallback((text: string) => setAnswer((a) => (a ? `${a} ${text}` : text)), []),
+    useCallback((text: string) => {
+      const append = (a: string) => (a ? `${a} ${text}` : text);
+      if (srTarget.current === "ask") setAskText(append);
+      else setAnswer(append);
+    }, []),
   );
 
   const proctor = useProctoring({
@@ -159,6 +170,9 @@ export function InterviewRoom({ id }: { id: string }) {
       const next: Turn = { index, question: item.question, roundType: item.roundType, prompt: item.question.prompt, isFollowUp: false, parentResponseId: null };
       setTurn(next);
       setAnswer("");
+      setClarifications([]);
+      setAskOpen(false);
+      srTarget.current = "answer";
       setCode(item.question.starter_code ?? "");
       if (item.question.language_hint) setLanguage(item.question.language_hint.toLowerCase());
       setStartedAt(Date.now());
@@ -211,12 +225,13 @@ export function InterviewRoom({ id }: { id: string }) {
           isFollowUp: current.isFollowUp,
           parentResponseId: current.parentResponseId,
           answerText: skipped ? "" : answer,
-          code: skipped || !isCoding ? "" : code,
+          code: skipped || !isCoding || code.trim() === (current.question.starter_code ?? "").trim() ? "" : code,
           codeLanguage: isCoding ? language : "",
           skipped,
           startedAt: new Date(startedAt).toISOString(),
           endedAt: new Date().toISOString(),
           speakingSeconds: sr.takeSpeakingSeconds(),
+          clarifications,
         },
       });
       if (!current.isFollowUp) setAnsweredCount((n) => n + 1);
@@ -227,6 +242,9 @@ export function InterviewRoom({ id }: { id: string }) {
         const next: Turn = { ...current, prompt: followUp.follow_up_question, isFollowUp: true, parentResponseId: response.id };
         setTurn(next);
         setAnswer("");
+        setClarifications([]);
+        setAskOpen(false);
+        srTarget.current = "answer";
         setStartedAt(Date.now());
         setPhase("question");
         await say(followUp.follow_up_question);
@@ -238,6 +256,42 @@ export function InterviewRoom({ id }: { id: string }) {
     } catch (e) {
       setActionError((e as Error).message);
       setPhase("question");
+    }
+  }
+
+  function openAsk() {
+    sr.stop();
+    speaker.cancel();
+    srTarget.current = "ask";
+    setAskText("");
+    setAskOpen(true);
+  }
+
+  function closeAsk() {
+    sr.stop();
+    srTarget.current = "answer";
+    setAskOpen(false);
+  }
+
+  async function sendClarification() {
+    const current = turnRef.current;
+    const question = askText.trim();
+    if (!current || !question) return;
+    sr.stop();
+    setAsking(true);
+    setActionError("");
+    try {
+      const c = await api<Clarification>(`/api/interviews/${id}/clarify`, {
+        method: "POST",
+        json: { questionId: current.question.id, prompt: current.prompt, question, previous: clarifications },
+      });
+      setClarifications((list) => [...list, c]);
+      closeAsk();
+      await say(c.reply);
+    } catch (e) {
+      setActionError((e as Error).message);
+    } finally {
+      setAsking(false);
     }
   }
 
@@ -389,13 +443,54 @@ export function InterviewRoom({ id }: { id: string }) {
                   <span className="rounded-full bg-brand-500/20 px-2 py-0.5 font-medium text-brand-200">{turn.isFollowUp ? "Follow-up" : ROUND_LABELS[turn.roundType]}</span>
                   {!turn.isFollowUp && <span className="rounded-full bg-white/10 px-2 py-0.5 text-slate-300">{q?.topic}</span>}
                   {!turn.isFollowUp && <span className="rounded-full bg-white/10 px-2 py-0.5 capitalize text-slate-300">{q?.difficulty}</span>}
-                  <button onClick={() => say(turn.prompt)} disabled={speaker.speaking} className="ml-auto inline-flex items-center gap-1 text-slate-400 hover:text-white disabled:opacity-40">
+                  <button onClick={openAsk} disabled={!canAnswer || askOpen || clarifications.length >= 5} className="ml-auto inline-flex items-center gap-1 text-slate-400 hover:text-white disabled:opacity-40" title="Ask the interviewer about constraints, scope or assumptions">
+                    <HelpCircle className="h-3.5 w-3.5" /> Ask a question
+                  </button>
+                  <button onClick={() => say(turn.prompt)} disabled={speaker.speaking} className="inline-flex items-center gap-1 text-slate-400 hover:text-white disabled:opacity-40">
                     <RotateCcw className="h-3.5 w-3.5" /> Repeat
                   </button>
                   {speaker.speaking && <button onClick={speaker.cancel} className="text-slate-400 hover:text-white">Skip reading</button>}
                 </div>
                 <p className="mt-3 text-lg leading-relaxed">{turn.prompt}</p>
                 {overTime && <p className="mt-2 text-xs text-rose-300">You&apos;re over the suggested time — start wrapping up your answer.</p>}
+
+                {clarifications.length > 0 && (
+                  <div className="mt-4 space-y-2 border-t border-white/10 pt-3">
+                    {clarifications.map((c, n) => (
+                      <div key={n} className="space-y-1 text-sm">
+                        <p className="text-slate-300"><span className="font-medium text-slate-100">You:</span> {c.question}</p>
+                        <p className="text-brand-200"><span className="font-medium">{plan.interviewer_name}:</span> {c.reply}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {askOpen && (
+                  <div className="mt-4 rounded-xl bg-black/30 p-3 ring-1 ring-brand-500/40">
+                    <label className="text-xs text-slate-400" htmlFor="ask-input">Clarifying question for {plan.interviewer_name} — scope, constraints, input size, assumptions…</label>
+                    <div className="mt-2 flex gap-2">
+                      <input
+                        id="ask-input"
+                        autoFocus
+                        value={askText}
+                        onChange={(e) => setAskText(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && sendClarification()}
+                        placeholder={sr.supported ? "Type or use the mic…" : "Type your question…"}
+                        className="min-w-0 flex-1 rounded-lg bg-black/40 px-3 py-2 text-sm outline-none ring-1 ring-white/10 focus:ring-brand-500"
+                      />
+                      {sr.supported && (
+                        <button onClick={() => (sr.listening ? sr.stop() : sr.start())} className={cx("rounded-lg px-2.5", sr.listening ? "bg-rose-600" : "bg-white/10 hover:bg-white/20")} title={sr.listening ? "Stop mic" : "Speak your question"}>
+                          {sr.listening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                        </button>
+                      )}
+                      <button onClick={sendClarification} disabled={asking || !askText.trim()} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 text-sm font-medium hover:bg-brand-500 disabled:opacity-40">
+                        {asking ? <Spinner className="h-3.5 w-3.5" /> : <Send className="h-3.5 w-3.5" />} Ask
+                      </button>
+                      <button onClick={closeAsk} className="rounded-lg px-2 text-sm text-slate-400 hover:text-white">Cancel</button>
+                    </div>
+                    {sr.interim && <p className="mt-2 text-xs italic text-slate-400">{sr.interim}</p>}
+                  </div>
+                )}
               </div>
 
               {isCoding && (
@@ -416,13 +511,17 @@ export function InterviewRoom({ id }: { id: string }) {
                   placeholder={sr.supported ? "Press the microphone and start speaking — your words appear here. You can also type." : "Type your answer here (voice answers need Chrome or Edge)."}
                   className={cx("w-full flex-1 resize-none rounded-xl bg-black/30 p-3 text-sm leading-relaxed text-slate-100 outline-none ring-1 ring-white/10 placeholder:text-slate-500 focus:ring-brand-500", isCoding ? "min-h-[90px]" : "min-h-[180px]")}
                 />
-                {sr.interim && <p className="mt-2 text-sm italic text-slate-400">{sr.interim}</p>}
+                {sr.interim && !askOpen && <p className="mt-2 text-sm italic text-slate-400">{sr.interim}</p>}
                 {actionError && <p className="mt-2 text-sm text-rose-300">{actionError}</p>}
 
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   {sr.supported && (
                     <button
-                      onClick={() => (sr.listening ? sr.stop() : sr.start())}
+                      onClick={() => {
+                        if (sr.listening) return sr.stop();
+                        closeAsk();
+                        sr.start();
+                      }}
                       disabled={!canAnswer || speaker.speaking}
                       className={cx("inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition disabled:opacity-40", sr.listening ? "bg-rose-600 hover:bg-rose-700" : "bg-white/10 hover:bg-white/20")}
                     >
