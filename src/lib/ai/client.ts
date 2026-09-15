@@ -40,7 +40,7 @@ export function describeError(err: unknown): string {
 export async function structured<T extends z.ZodType>(opts: {
   schema: T;
   system: string;
-  prompt: string;
+  prompt: string | Anthropic.Beta.BetaContentBlockParam[];
   effort?: Effort;
   maxTokens?: number;
 }): Promise<z.infer<T>> {

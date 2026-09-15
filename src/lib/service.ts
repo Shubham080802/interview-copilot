@@ -3,9 +3,10 @@ import { aiEnabled, describeError } from "./ai/client";
 import * as ai from "./ai/engine";
 import * as demo from "./demo";
 import { computeIntegrity } from "./integrity";
+import { basicJobPosting, extractPdfText, ImportError, isPdf, safeFetchText, scrapeJobPage } from "./importers";
 import * as repo from "./repo";
-import type { RoundType } from "./schemas";
-import type { Evaluation, Interview, InterviewResponse } from "./types";
+import type { ClarificationReply, JobPosting, ResumeProfile, RoundType } from "./schemas";
+import type { Clarification, Evaluation, Interview, InterviewResponse } from "./types";
 import { createZoomMeeting, zoomConfigured } from "./zoom";
 
 const running = new Set<string>();
@@ -182,4 +183,113 @@ export async function studyPlan() {
   const plan = aiEnabled() ? await ai.generateStudyPlan(insights, recent || "none") : demo.demoStudyPlan(insights);
   repo.saveInsights({ ...insights, studyPlan: plan });
   return plan;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Clarifying questions                                               */
+/* ------------------------------------------------------------------ */
+
+export const MAX_CLARIFICATIONS = 5;
+
+export async function clarify(
+  interview: Interview,
+  input: { questionId: string; prompt: string; candidateQuestion: string; previous: Clarification[] },
+): Promise<ClarificationReply> {
+  const question = interview.plan?.rounds.flatMap((r) => r.questions).find((q) => q.id === input.questionId) ?? null;
+  const roundType = interview.plan?.rounds.find((r) => r.questions.some((q) => q.id === input.questionId))?.type ?? "technical";
+  if (interview.generatedBy === "ai" && aiEnabled()) {
+    try {
+      return await ai.answerClarification({
+        config: interview.config,
+        question,
+        prompt: input.prompt,
+        candidateQuestion: input.candidateQuestion,
+        previous: input.previous,
+      });
+    } catch (err) {
+      console.warn("[clarify]", describeError(err));
+    }
+  }
+  return demo.demoClarification(roundType, input.candidateQuestion);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Imports                                                            */
+/* ------------------------------------------------------------------ */
+
+export interface ImportResult<T> {
+  data: T;
+  method: "ai" | "basic";
+  warning?: string;
+}
+
+export async function importResume(file: Uint8Array, filename: string): Promise<ImportResult<ResumeProfile>> {
+  const pdf = isPdf(file);
+  if (!pdf && !/\.(txt|md)$/i.test(filename)) throw new ImportError("Upload a PDF, .txt or .md resume.");
+  const text = pdf ? null : Buffer.from(file).toString("utf8");
+
+  if (aiEnabled()) {
+    try {
+      const data = await ai.extractResume(pdf ? { pdfBase64: Buffer.from(file).toString("base64") } : { text: text! });
+      return { data: { ...data, experience_years: Math.max(0, Math.round(data.experience_years)) }, method: "ai" };
+    } catch (err) {
+      console.warn("[resume]", describeError(err));
+      const plain = await basicResume(pdf, file, text);
+      return { ...plain, warning: `AI extraction failed (${describeError(err)}), so the raw text was imported.` };
+    }
+  }
+  return basicResume(pdf, file, text);
+}
+
+async function basicResume(pdf: boolean, file: Uint8Array, text: string | null): Promise<ImportResult<ResumeProfile>> {
+  const raw = pdf ? await extractPdfText(file) : text!;
+  if (!raw.trim()) throw new ImportError("No text was found in that file. If it's a scanned image, paste the text instead.");
+  const lines = raw.split("\n").map((l) => l.trim()).filter(Boolean);
+  const name = lines.find((l) => /^[A-Za-z][A-Za-z .'-]{2,40}$/.test(l) && l.split(" ").length <= 4) ?? "";
+  const years = [...raw.matchAll(/\b(19|20)\d{2}\b/g)].map((m) => Number(m[0])).filter((y) => y <= new Date().getFullYear());
+  return {
+    data: {
+      name,
+      headline: "",
+      experience_years: years.length ? Math.min(40, new Date().getFullYear() - Math.min(...years)) : 0,
+      resume_markdown: raw,
+    },
+    method: "basic",
+    warning: "Imported the resume text without AI — review the name and years of experience.",
+  };
+}
+
+export async function importJobPosting(source: { url?: string; text?: string }): Promise<ImportResult<JobPosting>> {
+  if (source.text) {
+    if (!aiEnabled()) throw new ImportError("Extracting details from pasted text needs AI mode. You can still paste it into the fields.");
+    return { data: await ai.structureJobPosting({ text: source.text }), method: "ai" };
+  }
+
+  let scraped: ReturnType<typeof scrapeJobPage> | null = null;
+  let fetchError: unknown = null;
+  try {
+    const page = await safeFetchText(source.url!);
+    scraped = scrapeJobPage(page.url, page.html);
+  } catch (err) {
+    if (err instanceof ImportError && /private|valid URL|http\(s\)|custom ports/.test(err.message)) throw err;
+    fetchError = err;
+  }
+  const usable = scraped && scraped.description.length > 300;
+
+  if (aiEnabled()) {
+    const text = usable
+      ? `${scraped!.title}\n${scraped!.company}\n\n${scraped!.description}`
+      : await ai.fetchPageWithClaude(source.url!); // blocked or JS-rendered pages
+    return { data: await ai.structureJobPosting({ url: source.url, text }), method: "ai" };
+  }
+  if (!usable) {
+    throw fetchError instanceof ImportError
+      ? fetchError
+      : new ImportError("That page didn't contain a readable job description (it may need JavaScript or a login). Paste the description instead.");
+  }
+  return {
+    data: basicJobPosting(scraped!),
+    method: "basic",
+    warning: scraped!.fromStructuredData ? undefined : "Imported without AI — double-check the role, company and requirements.",
+  };
 }

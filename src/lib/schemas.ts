@@ -7,6 +7,8 @@ import { z } from "zod";
 export const ROUND_TYPES = ["technical", "coding", "behavioral", "system_design", "hr"] as const;
 export type RoundType = (typeof ROUND_TYPES)[number];
 
+export const SENIORITY_LEVELS = ["intern", "junior", "mid", "senior", "staff", "manager"] as const;
+
 export const ROUND_LABELS: Record<RoundType, string> = {
   technical: "Technical",
   coding: "Coding",
@@ -18,7 +20,7 @@ export const ROUND_LABELS: Record<RoundType, string> = {
 export const InterviewConfigSchema = z.object({
   field: z.string().trim().min(1, "Pick a field"),
   role: z.string().trim().min(1, "Role is required"),
-  seniority: z.enum(["intern", "junior", "mid", "senior", "staff", "manager"]),
+  seniority: z.enum(SENIORITY_LEVELS),
   company: z.string().trim().min(1, "Company is required"),
   companyWebsite: z.string().trim().default(""),
   jobDescription: z.string().trim().default(""),
@@ -144,3 +146,36 @@ export const StudyPlanSchema = z.object({
   practice_questions: z.array(z.string()),
 });
 export type StudyPlan = z.infer<typeof StudyPlanSchema>;
+
+/* ------------------------------------------------------------------ */
+/*  Clarifying questions & imports                                    */
+/* ------------------------------------------------------------------ */
+
+export const ClarificationReplySchema = z.object({
+  reply: z.string().describe("Spoken reply, 1-3 sentences"),
+  gave_hint: z.boolean().describe("True if the reply points toward the solution beyond clarifying the problem"),
+});
+export type ClarificationReply = z.infer<typeof ClarificationReplySchema>;
+
+
+export const ResumeProfileSchema = z.object({
+  name: z.string(),
+  headline: z.string().describe("One line: current role, years, domain, core stack"),
+  experience_years: z.number().describe("Total years of professional experience, 0 if none"),
+  resume_markdown: z
+    .string()
+    .describe("Complete resume rewritten as clean markdown: experience with achievements, projects, skills, education. Keep every fact; do not invent anything."),
+});
+export type ResumeProfile = z.infer<typeof ResumeProfileSchema>;
+
+export const JobPostingSchema = z.object({
+  role: z.string(),
+  company: z.string(),
+  company_website: z.string().describe("Company homepage URL, or empty string if unknown"),
+  field: z.string().describe("Broad field such as Software Engineering, Data Science / ML, Product Management"),
+  seniority: z.enum(SENIORITY_LEVELS),
+  job_description: z.string().describe("The job description as clean plain text / markdown"),
+  requirements: z.string().describe("Key required and preferred skills, one per line"),
+  company_notes: z.string().describe("What the posting says about the company, team, product and mission"),
+});
+export type JobPosting = z.infer<typeof JobPostingSchema>;

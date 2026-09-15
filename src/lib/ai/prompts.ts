@@ -61,6 +61,9 @@ export function describeTranscript(interview: Interview, responses: InterviewRes
       return [
         `<response id="${r.id}" round="${r.roundType}"${r.isFollowUp ? ' follow_up="true"' : ""}>`,
         `Question: ${r.prompt}`,
+        r.clarifications?.length
+          ? `Clarifying questions asked by the candidate:\n${r.clarifications.map((c) => `- Candidate: ${c.question}\n  Interviewer: ${c.reply}${c.gaveHint ? " (interviewer gave a hint)" : ""}`).join("\n")}`
+          : "",
         q && !r.isFollowUp ? `Rubric: ${q.rubric.join("; ")}` : "",
         r.skipped ? "Candidate SKIPPED this question." : `Answer (speech transcript / typed):\n${r.answerText || "(empty)"}`,
         r.code ? `Code (${r.codeLanguage}):\n\`\`\`\n${r.code}\n\`\`\`` : "",

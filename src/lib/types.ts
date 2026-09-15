@@ -56,6 +56,15 @@ export interface InterviewResponse {
   wordsPerMinute: number;
   fillerCount: number;
   retries: RetryAttempt[];
+  /** Clarifying questions the candidate asked before answering (absent on older records). */
+  clarifications?: Clarification[];
+}
+
+export interface Clarification {
+  at: string;
+  question: string;
+  reply: string;
+  gaveHint: boolean;
 }
 
 export interface RetryAttempt {

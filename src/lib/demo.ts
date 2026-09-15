@@ -6,6 +6,7 @@ import "server-only";
  */
 import {
   ROUND_LABELS,
+  type ClarificationReply,
   type FollowUp,
   type InterviewConfig,
   type InterviewPlan,
@@ -127,12 +128,27 @@ export function demoPlan(config: InterviewConfig, insights: StoredInsights, past
 
   return {
     interviewer_name: "Alex",
-    intro_script: `Hi, I'm Alex, and I'll be your interviewer today for the ${config.role} position at ${config.company}. We'll go through ${rounds.length} round${rounds.length > 1 ? "s" : ""}. Take your time, think out loud, and let's begin.`,
+    intro_script: `Hi, I'm Alex, and I'll be your interviewer today for the ${config.role} position at ${config.company}. We'll go through ${rounds.length} round${rounds.length > 1 ? "s" : ""}. Think out loud, and feel free to ask clarifying questions at any time. Let's begin.`,
     company_context_summary: config.companyNotes || `Demo mode: questions come from a built-in bank tailored with the job details you entered for ${config.company}.`,
     focus_areas: [...skills.slice(0, 4), ...insights.topics_to_revisit.slice(0, 2)],
     rounds,
     closing_script: `That's the end of our interview. Thank you for your time — your detailed feedback report will be ready in a moment.`,
   };
+}
+
+const CLARIFY_REPLIES: Record<RoundType, string> = {
+  coding: "Good question. Assume the input fits in memory and can include edge cases like empty input or duplicates. State any other assumptions out loud and go with them.",
+  system_design: "Great question. Assume a large global user base with read-heavy traffic, and aim for high availability. Tell me which other assumptions you're making.",
+  technical: "Good question — use whatever context is most realistic from your own experience, and state your assumptions as you go.",
+  behavioral: "Any situation from work, school or a personal project is fine, as long as you were directly involved.",
+  hr: "There's no single right answer here — just be specific and honest.",
+};
+
+export function demoClarification(roundType: RoundType, candidateQuestion: string): ClarificationReply {
+  if (/\b(answer|solution|hint|how (do|would) i solve|what should i)\b/i.test(candidateQuestion)) {
+    return { reply: "I'd rather hear how you'd approach it first. Walk me through your initial thinking and we'll go from there.", gave_hint: false };
+  }
+  return { reply: CLARIFY_REPLIES[roundType], gave_hint: false };
 }
 
 export function demoFollowUp(answer: string, isFollowUp: boolean, hints: string[]): FollowUp {
@@ -164,7 +180,9 @@ function scoreAnswer(r: InterviewResponse, q: PlanQuestion | undefined): Questio
   const coverage = rubric.length ? covered.length / rubric.length : 0.5;
   const depth = Math.min(words / 150, 1);
   const delivery = r.fillerCount > 8 ? 0.6 : 1;
-  const score = Math.round((coverage * 6 + depth * 3 + delivery) * 10) / 10;
+  const clarified = (r.clarifications?.length ?? 0) > 0;
+  const clarifyBonus = clarified && (r.roundType === "coding" || r.roundType === "system_design") ? 0.5 : 0;
+  const score = Math.round((coverage * 6 + depth * 3 + delivery + clarifyBonus) * 10) / 10;
   return {
     response_id: r.id,
     score: Math.min(score, 10),
@@ -172,6 +190,7 @@ function scoreAnswer(r: InterviewResponse, q: PlanQuestion | undefined): Questio
     strengths: [
       ...(covered.length ? [`Touched on: ${covered.join(", ")}`] : []),
       ...(depth > 0.7 ? ["Gave a detailed answer"] : []),
+      ...(clarified ? ["Asked clarifying questions before answering"] : []),
     ],
     improvements: [
       ...(depth < 0.5 ? ["Answer was brief — add a concrete example and outcome"] : []),

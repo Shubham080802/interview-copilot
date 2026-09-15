@@ -18,6 +18,10 @@ const AnswerInput = z.object({
   startedAt: z.string(),
   endedAt: z.string(),
   speakingSeconds: z.number().min(0).default(0),
+  clarifications: z
+    .array(z.object({ at: z.string(), question: z.string().max(2000), reply: z.string().max(4000), gaveHint: z.boolean() }))
+    .max(10)
+    .default([]),
 });
 
 export async function POST(req: Request, ctx: IdParams) {

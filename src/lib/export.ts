@@ -47,6 +47,9 @@ export function toMarkdown(b: InterviewBundle): string {
   for (const r of responses) {
     const e = qe.get(r.id);
     lines.push(`\n### ${r.isFollowUp ? "↳ Follow-up" : ROUND_LABELS[r.roundType]}: ${r.prompt}`);
+    if (r.clarifications?.length) {
+      lines.push(`**Clarifying questions**\n${list(r.clarifications.map((c) => `**You:** ${c.question} — **Interviewer:** ${c.reply}${c.gaveHint ? " _(hint)_" : ""}`))}`);
+    }
     lines.push(r.skipped ? "_Skipped_" : `**Your answer** (${r.durationSec}s, ${r.wordsPerMinute || "–"} wpm, ${r.fillerCount} fillers):\n\n> ${(r.answerText || "(no verbal answer)").replace(/\n/g, "\n> ")}`);
     if (r.code) lines.push(`\n\`\`\`${r.codeLanguage}\n${r.code}\n\`\`\``);
     if (e) {
