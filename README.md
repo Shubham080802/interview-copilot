@@ -6,9 +6,9 @@ AI mock interviews tailored to the company and role you're targeting — run as 
 
 | Step | What happens |
 |---|---|
-| **1. Set up** | Pick the field, role, level and company; paste the job description, requirements and what you know about the company. Choose rounds: Technical, Coding, Behavioural, System Design, HR. |
+| **1. Set up** | Import a job posting from its link (or pick the field, role, level and company yourself), add requirements and what you know about the company, and choose rounds: Technical, Coding, Behavioural, System Design, HR. Upload your resume (PDF) once to fill in your profile. |
 | **2. Prepare** | Claude researches the company's current work on the web (products, launches, tech stack, interview style), reads your profile/resume and your **history from past interviews**, then designs the questions — avoiding repeats and deliberately probing past weak spots. |
-| **3. Interview (video mode)** | An AI interviewer asks each question out loud. You answer by voice (live speech-to-text) or typing; coding questions open a code editor (JavaScript can be run in-browser). The interviewer asks follow-ups when an answer is vague or incomplete. |
+| **3. Interview (video mode)** | An AI interviewer asks each question out loud. You answer by voice (live speech-to-text) or typing; coding questions open a code editor (JavaScript can be run in-browser). The interviewer asks follow-ups when an answer is vague or incomplete, and you can **ask clarifying questions** (scope, constraints, assumptions) — the interviewer answers without giving away the solution, and good clarifying questions count in your evaluation. |
 | **4. Proctoring** | Runs in parallel: camera face tracking (out of frame, multiple people, looking away), tab switches, window focus loss, leaving full screen, pasting, extended displays. Flags include snapshots and produce an auditable integrity score. The session can be recorded. |
 | **5. Evaluation** | Every answer gets a score, strengths, improvements, missed points, a model answer and a coaching tip. Rounds and the overall interview get scores, a hire recommendation, communication analysis (pace, filler words) and an action plan. |
 | **6. Learning session** | Replay the recording, chat with an AI coach that has your full transcript, and **practice any question again** to get re-scored. |
@@ -55,6 +55,9 @@ All calls go through the Anthropic SDK with `claude-opus-5` (override with `ANTH
 | Company research | `src/lib/ai/engine.ts` → `researchCompany` | Web search tool, max 6 searches |
 | Question plan | `generatePlan` | Uses setup, profile, research, stored insights and previously asked questions |
 | Live follow-ups | `decideFollowUp` | Low effort for low latency |
+| Clarifying questions | `answerClarification` | Answers scope/constraint questions, flags when a hint was given |
+| Resume import | `extractResume` | Claude reads the PDF directly; without AI, text is extracted locally |
+| Job posting import | `structureJobPosting`, `fetchPageWithClaude` | Pages are fetched server-side (public addresses only, schema.org JobPosting preferred); Claude's web fetch is the fallback for blocked or JavaScript-heavy sites |
 | Evaluation | `evaluateRound` (parallel per round) + `evaluateOverall` | Overall step also rewrites your long-term profile |
 | Practice re-scoring | `evaluateRetry` | |
 | Coach chat | `streamCoachReply` | Streaming; interview context is prompt-cached |
@@ -75,6 +78,14 @@ Interview content is sent to the Anthropic API for generation and evaluation whe
 Proctoring signals are automated indicators, not proof of cheating — the report says so and links the evidence (snapshots, timeline, recording) for review.
 
 **Network access:** `npm run dev` and `npm start` listen on `127.0.0.1` only. The app has no login, so anyone who can reach it can read your recordings and use your API key — don't expose it to a network (e.g. `-H 0.0.0.0`) without adding authentication first.
+
+## Deployment
+
+Interview Copilot is currently built to run **locally**. Hosting it (e.g. on Vercel) needs these changes first:
+
+1. **Authentication** — there is no login, so a public URL would expose every recording and let anyone spend your API key.
+2. **Hosted storage** — SQLite, recordings and snapshots are written to the local disk; serverless platforms don't keep files between requests. Use a hosted database (e.g. Postgres) and object storage (e.g. Vercel Blob or S3).
+3. **Durable background jobs** — interview preparation and evaluation continue after the HTTP response; serverless functions are frozen at that point. Move them to a job queue or `after()`/`waitUntil` with a long enough function duration.
 
 ## Modules
 
@@ -97,6 +108,7 @@ The codebase is organised into modules, and the git history adds them one commit
 | 13 | Interview room | Live video interview UI and code editor | `src/app/interviews/[id]/room/`, `src/components/CodeEditor.tsx` |
 | 14 | Report & learning session | Scores, feedback, practice retries, coach, integrity, replay | `src/app/interviews/[id]/report/` |
 | 15 | Progress | Cross-interview insights and study plan | `src/app/progress/` |
+| 16 | Imports | Safe URL fetching, job posting parsing, resume PDF text extraction | `src/lib/importers.ts`, `api/import/job`, `api/profile/resume` |
 
 ## Project layout
 
