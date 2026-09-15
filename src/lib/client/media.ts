@@ -9,10 +9,14 @@ export function useMediaStream() {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [error, setError] = useState("");
 
+  const currentRef = useRef<MediaStream | null>(null);
   const request = useCallback(async () => {
     setError("");
+    // Release the previous (possibly ended or hijacked) camera before asking again.
+    currentRef.current?.getTracks().forEach((t) => t.stop());
     if (process.env.NODE_ENV === "development" && new URLSearchParams(location.search).has("fakeCamera")) {
       const s = fakeStream();
+      currentRef.current = s;
       setStream(s);
       return s;
     }
@@ -21,6 +25,7 @@ export function useMediaStream() {
         video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
         audio: { echoCancellation: true, noiseSuppression: true },
       });
+      currentRef.current = s;
       setStream(s);
       return s;
     } catch (e) {
@@ -252,19 +257,24 @@ export function useRecorder(interviewId: string) {
   const seqRef = useRef(0);
   const [recording, setRecording] = useState(false);
 
+  const segmentRef = useRef(1);
+  /** Starts recording into the given part number (a new part per camera reconnect / resume). */
   const start = useCallback(
-    (stream: MediaStream) => {
+    (stream: MediaStream, segment: number) => {
       const candidates = stream.getAudioTracks().length
         ? ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
         : ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
       const mime = candidates.find((m) => MediaRecorder.isTypeSupported(m));
       if (!mime) return false; // e.g. Safari: skip recording rather than store an unplayable file
       const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 900_000 });
+      segmentRef.current = segment;
+      seqRef.current = 0;
       rec.ondataavailable = (e) => {
         if (!e.data.size) return;
         const seq = seqRef.current++;
+        const part = String(segment);
         chainRef.current = chainRef.current.then(() =>
-          fetch(`/api/interviews/${interviewId}/recording`, { method: "POST", headers: { "x-seq": String(seq) }, body: e.data }).catch(() => {}),
+          fetch(`/api/interviews/${interviewId}/recording`, { method: "POST", headers: { "x-seq": String(seq), "x-segment": part }, body: e.data }).catch(() => {}),
         );
       };
       rec.start(4000);
@@ -288,5 +298,5 @@ export function useRecorder(interviewId: string) {
     await chainRef.current;
   }, []);
 
-  return { start, stop, recording };
+  return { start, stop, recording, segmentRef };
 }

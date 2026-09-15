@@ -74,13 +74,21 @@ export function Report({ id }: { id: string }) {
       {tab === "coach" && <Coach id={id} demo={ev.generatedBy !== "ai"} />}
       {tab === "integrity" && <Integrity data={data} />}
       {tab === "recording" && (
-        <Card>
-          <video controls src={`/api/interviews/${id}/recording`} className="w-full rounded-xl bg-black" />
-          <div className="mt-3 flex items-center justify-between text-sm text-slate-500">
-            <span>Replay your interview to review body language, pace and clarity.</span>
-            <a href={`/api/interviews/${id}/recording?download=1`} className="font-medium text-brand-600 hover:underline">Download video</a>
-          </div>
-        </Card>
+        <div className="space-y-4">
+          {i.recordingSegments.length > 1 && (
+            <p className="text-sm text-slate-500">This recording has {i.recordingSegments.length} parts — a new part starts when the camera reconnects or the interview is resumed.</p>
+          )}
+          {i.recordingSegments.map((segment) => (
+            <Card key={segment}>
+              {i.recordingSegments.length > 1 && <div className="mb-2 text-sm font-medium">Part {segment}</div>}
+              <video controls preload="metadata" src={`/api/interviews/${id}/recording?segment=${segment}`} className="w-full rounded-xl bg-black" />
+              <div className="mt-3 flex items-center justify-between text-sm text-slate-500">
+                <span>Replay your interview to review body language, pace and clarity.</span>
+                <a href={`/api/interviews/${id}/recording?segment=${segment}&download=1`} className="font-medium text-brand-600 hover:underline">Download video</a>
+              </div>
+            </Card>
+          ))}
+        </div>
       )}
     </div>
   );

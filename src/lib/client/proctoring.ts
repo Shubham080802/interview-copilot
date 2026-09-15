@@ -28,7 +28,7 @@ const WARNINGS: Partial<Record<ProctorEventType, string>> = {
   window_blur: "The interview window lost focus. This has been recorded.",
   fullscreen_exit: "You exited full screen. Please return to full screen.",
   paste: "Pasting into answers is flagged by proctoring.",
-  camera_off: "Your camera stopped. Please re-enable it.",
+  camera_off: "Your camera was off. The gap has been recorded.",
 };
 
 // How long a visual condition must persist before it becomes a flag.
@@ -268,14 +268,6 @@ export function useProctoring(opts: {
     const screenInfo = window.screen as Screen & { isExtended?: boolean };
     if (screenInfo.isExtended) push({ type: "multiple_screens", severity: "low", detail: "An extended display is connected", durationSec: 0, snapshot: null });
 
-    const track = video?.srcObject instanceof MediaStream ? video.srcObject.getVideoTracks()[0] : undefined;
-    const onEnded = () => {
-      push({ type: "camera_off", severity: "high", detail: "Camera track ended", durationSec: 0, snapshot: null });
-      flash("camera_off");
-    };
-    track?.addEventListener("ended", onEnded);
-
-    const flushTimer = setInterval(flush, 3000);
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("blur", onBlur);
@@ -283,10 +275,25 @@ export function useProctoring(opts: {
       document.removeEventListener("fullscreenchange", onFullscreen);
       document.removeEventListener("paste", onPaste, true);
       document.removeEventListener("copy", onCopy, true);
-      track?.removeEventListener("ended", onEnded);
-      clearInterval(flushTimer);
     };
-  }, [enabled, active, video, push, flash, flush, endCondition]);
+  }, [enabled, active, push, flash, endCondition]);
+
+  // Upload events while the session is active, even with proctoring checks disabled
+  // (camera-off gaps are always recorded).
+  useEffect(() => {
+    if (!active) return;
+    const flushTimer = setInterval(flush, 3000);
+    return () => clearInterval(flushTimer);
+  }, [active, flush]);
+
+  /** Records a period during which the camera was off, covered or unavailable. */
+  const recordCameraGap = useCallback(
+    (sinceMs: number, reason: string) => {
+      const durationSec = Math.round((Date.now() - sinceMs) / 1000);
+      push({ at: new Date(sinceMs).toISOString(), type: "camera_off", severity: durationSec > 10 ? "high" : "medium", detail: `${reason} for ${durationSec}s`, durationSec, snapshot: null });
+    },
+    [push],
+  );
 
   /** Closes any open conditions and uploads remaining events (call before finishing). */
   const finalize = useCallback(async () => {
@@ -299,5 +306,5 @@ export function useProctoring(opts: {
     await flush();
   }, [endCondition, flush]);
 
-  return { faceStatus, warning, flagCount, finalize, snapshot };
+  return { faceStatus, warning, flagCount, finalize, snapshot, recordCameraGap };
 }

@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   SkipForward,
   Video,
+  VideoOff,
   Volume2,
   VolumeX,
   XCircle,
@@ -25,6 +26,7 @@ import { cx, Spinner } from "@/components/ui";
 import { api, formatDuration } from "@/lib/client/api";
 import { useMediaStream, useRecorder, useSpeaker, useSpeechRecognition } from "@/lib/client/media";
 import { useProctoring, type FaceStatus } from "@/lib/client/proctoring";
+import { CAMERA_PROBLEM_TEXT, PROBLEM_GRACE_MS, useCameraGuard, type CameraProblem } from "@/lib/client/camera-guard";
 import { useInterview } from "@/lib/client/useInterview";
 import { ROUND_LABELS, type FollowUp, type PlanQuestion, type RoundType } from "@/lib/schemas";
 import type { Clarification, InterviewResponse } from "@/lib/types";
@@ -102,6 +104,51 @@ export function InterviewRoom({ id }: { id: string }) {
     active: inSession && phase !== "closing",
   });
 
+  /* ------------------------ camera-on enforcement ------------------------ */
+  // The interview only runs with a live, unblocked camera. The server enforces the same rule
+  // through presence heartbeats, so answers can't be submitted with the camera off.
+  const camera = useCameraGuard({
+    interviewId: id,
+    stream: media.stream,
+    video: videoEl,
+    heartbeat: interview?.status === "ready" || interview?.status === "in_progress",
+  });
+  const paused = inSession && phase !== "closing" && !camera.cameraOn;
+  const pausedRef = useRef(false);
+  pausedRef.current = paused;
+  const pauseRef = useRef<{ since: number; reason: CameraProblem } | null>(null);
+
+  const confirmPresence = useCallback(
+    () =>
+      fetch(`/api/interviews/${id}/presence`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cameraOn: camera.cameraOn }),
+      }).catch(() => {}),
+    [id, camera.cameraOn],
+  );
+
+  // Recording restarts as a new part whenever the camera stream is replaced (reconnect).
+  const recordingStreamRef = useRef<MediaStream | null>(null);
+  const nextSegmentRef = useRef(1);
+  const startRecording = useCallback(
+    async (stream: MediaStream) => {
+      if (!interview?.config.recordVideo) return;
+      if (recordingStreamRef.current) await recorder.stop();
+      if (recorder.start(stream, nextSegmentRef.current)) {
+        nextSegmentRef.current += 1;
+        recordingStreamRef.current = stream;
+      }
+    },
+    [interview?.config.recordVideo, recorder],
+  );
+
+  useEffect(() => {
+    if (inSession && phase !== "closing" && media.stream && recordingStreamRef.current && media.stream !== recordingStreamRef.current) {
+      startRecording(media.stream);
+    }
+  }, [inSession, phase, media.stream, startRecording]);
+
   // Attach the camera stream to the <video>.
   useEffect(() => {
     if (videoEl && media.stream && videoEl.srcObject !== media.stream) videoEl.srcObject = media.stream;
@@ -139,10 +186,33 @@ export function InterviewRoom({ id }: { id: string }) {
     [speaker],
   );
 
+  // Pause: stop listening/speaking, freeze the question timer, and log the gap when the camera returns.
+  useEffect(() => {
+    if (paused && !pauseRef.current) {
+      const reason = camera.problem ?? "missing";
+      // The problem started before its detection grace period elapsed; log the full gap.
+      pauseRef.current = { since: Date.now() - PROBLEM_GRACE_MS[reason], reason };
+      sr.stop();
+      speaker.cancel();
+      setAskOpen(false);
+    } else if (!paused && pauseRef.current && phase !== "closing") {
+      const { since, reason } = pauseRef.current;
+      pauseRef.current = null;
+      setStartedAt((s) => s + (Date.now() - since));
+      proctor.recordCameraGap(since, CAMERA_PROBLEM_TEXT[reason].title);
+      const current = turnRef.current;
+      if (current && phase === "question") say(`Thanks, I can see you again. ${current.prompt}`);
+    }
+  }, [paused, phase, camera.problem, sr, speaker, proctor, say]);
+
   /* ----------------------------- flow ----------------------------- */
 
   const finish = useCallback(
     async (early: boolean) => {
+      if (pauseRef.current) {
+        proctor.recordCameraGap(pauseRef.current.since, CAMERA_PROBLEM_TEXT[pauseRef.current.reason].title);
+        pauseRef.current = null;
+      }
       setPhase("closing");
       sr.stop();
       if (!early && plan) await say(plan.closing_script);
@@ -181,23 +251,26 @@ export function InterviewRoom({ id }: { id: string }) {
         await say(`Great. Let's move on to the ${ROUND_LABELS[item.roundType]} round.`);
       }
       await say(item.question.prompt);
-      if (autoListen && sr.supported && turnRef.current?.index === index) sr.start();
+      if (autoListen && sr.supported && !pausedRef.current && turnRef.current?.index === index) sr.start();
     },
     [autoListen, finish, items, say, sr],
   );
 
   async function begin() {
     if (!interview || !plan || !media.stream) return;
+    if (!camera.cameraOn) return setActionError("Turn your camera on to start — the interview runs with the camera on throughout.");
     setActionError("");
     // Request full screen synchronously inside the click (user gesture); never block on it.
     if (proctoringOn && !document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
     try {
+      await confirmPresence();
       await api(`/api/interviews/${id}/start`, { method: "POST", json: {} });
     } catch (e) {
       setActionError((e as Error).message);
       return;
     }
-    if (interview.config.recordVideo && !interview.hasRecording) recorder.start(media.stream);
+    nextSegmentRef.current = Math.max(0, ...interview.recordingSegments) + 1;
+    await startRecording(media.stream);
 
     const answered = new Set((data?.responses ?? []).filter((r) => !r.isFollowUp).map((r) => r.questionId));
     setAnsweredCount(answered.size);
@@ -209,13 +282,14 @@ export function InterviewRoom({ id }: { id: string }) {
 
   async function submit(skipped: boolean) {
     const current = turnRef.current;
-    if (!current) return;
+    if (!current || pausedRef.current) return;
     sr.stop();
     speaker.cancel();
     setPhase("submitting");
     setActionError("");
     const isCoding = current.question.kind === "coding";
     try {
+      await confirmPresence();
       const { response, followUp } = await api<{ response: InterviewResponse; followUp: FollowUp }>(`/api/interviews/${id}/responses`, {
         method: "POST",
         json: {
@@ -248,7 +322,7 @@ export function InterviewRoom({ id }: { id: string }) {
         setStartedAt(Date.now());
         setPhase("question");
         await say(followUp.follow_up_question);
-        if (autoListen && sr.supported && turnRef.current === next) sr.start();
+        if (autoListen && sr.supported && !pausedRef.current && turnRef.current === next) sr.start();
       } else {
         await say(followUp.acknowledgement);
         await goTo(current.index + 1);
@@ -276,11 +350,12 @@ export function InterviewRoom({ id }: { id: string }) {
   async function sendClarification() {
     const current = turnRef.current;
     const question = askText.trim();
-    if (!current || !question) return;
+    if (!current || !question || pausedRef.current) return;
     sr.stop();
     setAsking(true);
     setActionError("");
     try {
+      await confirmPresence();
       const c = await api<Clarification>(`/api/interviews/${id}/clarify`, {
         method: "POST",
         json: { questionId: current.question.id, prompt: current.prompt, question, previous: clarifications },
@@ -310,7 +385,7 @@ export function InterviewRoom({ id }: { id: string }) {
 
   const q = turn?.question;
   const isCoding = q?.kind === "coding";
-  const elapsed = Math.max(0, Math.round((now - startedAt) / 1000));
+  const elapsed = Math.max(0, Math.round(((pauseRef.current?.since ?? now) - startedAt) / 1000));
   const limit = turn?.isFollowUp ? 150 : (q?.time_limit_seconds ?? 180);
   const overTime = elapsed > limit;
   const canAnswer = phase === "question";
@@ -332,6 +407,10 @@ export function InterviewRoom({ id }: { id: string }) {
               {formatDuration(elapsed)} / {formatDuration(limit)}
             </span>
           )}
+          <span className={cx("inline-flex items-center gap-1 rounded-full px-2.5 py-1", camera.cameraOn ? "bg-emerald-500/15 text-emerald-300" : "bg-rose-500/20 text-rose-300")}>
+            {camera.cameraOn ? <Video className="h-3.5 w-3.5" /> : <VideoOff className="h-3.5 w-3.5" />}
+            {camera.cameraOn ? "Camera on" : inSession ? "Camera off · paused" : "Camera off"}
+          </span>
           {proctoringOn && (
             <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1">
               <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" /> Proctored{proctor.flagCount > 0 && ` · ${proctor.flagCount} flag${proctor.flagCount > 1 ? "s" : ""}`}
@@ -410,13 +489,30 @@ export function InterviewRoom({ id }: { id: string }) {
         </div>
 
         {/* Right: setup checklist or question + answer */}
-        <div className="flex flex-col gap-4 lg:col-span-7">
+        <div className="relative flex flex-col gap-4 lg:col-span-7">
+          {paused && camera.problem && (
+            <div role="alertdialog" aria-labelledby="camera-paused-title" className="absolute inset-0 z-20 flex justify-center rounded-2xl bg-slate-950 p-6 ring-1 ring-rose-500/40">
+              <div className="sticky top-24 h-fit max-w-md pt-6 text-center">
+                <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-rose-500/15"><VideoOff className="h-7 w-7 text-rose-300" /></div>
+                <h2 id="camera-paused-title" className="mt-4 text-lg font-semibold">{CAMERA_PROBLEM_TEXT[camera.problem].title} — interview paused</h2>
+                <p className="mt-2 text-sm text-slate-300">{CAMERA_PROBLEM_TEXT[camera.problem].help}</p>
+                <p className="mt-2 text-xs text-slate-500">This interview runs with the camera on at all times. The question is hidden and the timer is stopped until your camera is back; the gap is recorded in your integrity report.</p>
+                {(camera.problem === "ended" || camera.problem === "muted" || camera.problem === "missing") && (
+                  <button onClick={media.request} className="mt-5 inline-flex items-center gap-2 rounded-full bg-brand-600 px-5 py-2 text-sm font-semibold hover:bg-brand-500">
+                    <Camera className="h-4 w-4" /> Reconnect camera
+                  </button>
+                )}
+                {media.error && <p className="mt-3 text-sm text-rose-300">{media.error}</p>}
+              </div>
+            </div>
+          )}
           {!inSession ? (
             <SetupPanel
               name={plan.interviewer_name}
               questionCount={items.length}
               resumed={(data?.responses.length ?? 0) > 0}
-              cameraReady={Boolean(media.stream)}
+              cameraReady={camera.cameraOn}
+              cameraProblem={camera.problem}
               speechSupported={sr.supported}
               faceStatus={proctoringOn ? proctor.faceStatus : null}
               proctoring={proctoringOn}
@@ -562,6 +658,7 @@ function SetupPanel(props: {
   questionCount: number;
   resumed: boolean;
   cameraReady: boolean;
+  cameraProblem: CameraProblem | null;
   speechSupported: boolean;
   faceStatus: FaceStatus | null;
   proctoring: boolean;
@@ -576,7 +673,11 @@ function SetupPanel(props: {
   const needsConsent = props.proctoring || props.recording;
   const faceOk = props.faceStatus === null || props.faceStatus === "ok" || props.faceStatus === "unavailable";
   const checks = [
-    { ok: props.cameraReady, label: "Camera and microphone connected", icon: Camera },
+    {
+      ok: props.cameraReady,
+      label: props.cameraReady ? "Camera and microphone on — keep the camera on for the whole interview" : props.cameraProblem ? `${CAMERA_PROBLEM_TEXT[props.cameraProblem].title}. ${CAMERA_PROBLEM_TEXT[props.cameraProblem].help}` : "Waiting for your camera",
+      icon: Camera,
+    },
     { ok: props.speechSupported, label: props.speechSupported ? "Voice answers supported" : "Voice answers need Chrome/Edge — you can type instead", icon: Mic, optional: true },
     ...(props.proctoring
       ? [{ ok: props.faceStatus === "ok", label: props.faceStatus === "unavailable" ? "Face tracking unavailable — other proctoring checks stay active" : props.faceStatus === "ok" ? "Your face is clearly visible" : "Position yourself so only your face is in frame", icon: ShieldCheck, optional: props.faceStatus === "unavailable" }]

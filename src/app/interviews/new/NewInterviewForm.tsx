@@ -199,6 +199,13 @@ export function NewInterviewForm({ aiEnabled, zoomConfigured }: { aiEnabled: boo
 
       <Card className="space-y-5">
         <SectionTitle n={4} title="Video, proctoring & Zoom" />
+        <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+          <input type="checkbox" checked disabled aria-label="Camera on (required)" className="mt-0.5 h-4 w-4 accent-emerald-600" />
+          <span>
+            <span className="block text-sm font-medium">Camera on — required</span>
+            <span className="mt-0.5 block text-xs text-slate-600">Every interview runs on camera. If the camera turns off or is covered, the interview pauses until it&apos;s back and the gap is recorded.</span>
+          </span>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Toggle checked={c.proctoring} onChange={(v) => set("proctoring", v)} label="Proctoring" hint="Camera face tracking (absence, extra people, looking away), tab switching, paste and full-screen monitoring." />
           <Toggle checked={c.recordVideo} onChange={(v) => set("recordVideo", v)} label="Record the interview" hint="Saves video + audio locally so you can replay it in the learning session." />
