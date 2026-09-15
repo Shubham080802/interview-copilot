@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const DATA_DIR = path.join(process.cwd(), "data");
+export const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), "data"));
 export const SNAPSHOT_DIR = path.join(DATA_DIR, "snapshots");
 export const RECORDING_DIR = path.join(DATA_DIR, "recordings");
 
@@ -63,9 +63,26 @@ export function db(): DatabaseSync {
     const conn = new DatabaseSync(path.join(DATA_DIR, "interviews.db"));
     conn.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
     conn.exec(SCHEMA);
+    recoverInterruptedTasks(conn);
     globalForDb.__interviewDb = conn;
   }
   return globalForDb.__interviewDb;
+}
+
+/**
+ * Preparation and evaluation run as in-process background tasks. If the server stopped
+ * while one was running, the interview would otherwise stay "preparing"/"evaluating"
+ * forever — mark it failed so the UI offers a retry.
+ */
+function recoverInterruptedTasks(conn: DatabaseSync) {
+  conn
+    .prepare(
+      `UPDATE interviews SET status = 'failed', prep_stage = 'Interrupted',
+         error = CASE status WHEN 'preparing' THEN 'Preparation was interrupted because the server restarted. Retry to continue.'
+                             ELSE 'Evaluation was interrupted because the server restarted. Retry to continue.' END
+       WHERE status IN ('preparing', 'evaluating')`,
+    )
+    .run();
 }
 
 export function toJson(value: unknown): string | null {
