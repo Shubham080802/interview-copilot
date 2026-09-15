@@ -32,7 +32,7 @@ const WARNINGS: Partial<Record<ProctorEventType, string>> = {
 };
 
 // How long a visual condition must persist before it becomes a flag.
-const THRESHOLD_MS: Partial<Record<ProctorEventType, number>> = { no_face: 3000, multiple_faces: 1500, looking_away: 4000 };
+const THRESHOLD_MS: Partial<Record<ProctorEventType, number>> = { no_face: 3000, multiple_faces: 1500, looking_away: 4000, window_blur: 1000 };
 
 let consolePatched = false;
 
@@ -235,13 +235,14 @@ export function useProctoring(opts: {
       }
     };
     const onBlur = () => {
-      if (!document.hidden) open.current.window_blur = { since: Date.now(), snapshot: null, reported: true };
+      if (!document.hidden) open.current.window_blur = { since: Date.now(), snapshot: null, reported: false };
     };
     const onFocus = () => {
-      if (open.current.window_blur) {
-        endCondition("window_blur", Date.now(), (s) => (s > 10 ? "medium" : "low"), "Window lost focus");
-        flash("window_blur");
-      }
+      const blur = open.current.window_blur;
+      if (!blur) return;
+      // Sub-second focus blips (system notifications, permission prompts) are ignored by the threshold.
+      if (Date.now() - blur.since >= (THRESHOLD_MS.window_blur ?? 0)) flash("window_blur");
+      endCondition("window_blur", Date.now(), (s) => (s > 10 ? "medium" : "low"), "Window lost focus");
     };
     const onFullscreen = () => {
       if (!document.fullscreenElement) {
