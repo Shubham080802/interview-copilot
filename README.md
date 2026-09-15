@@ -74,6 +74,8 @@ Interview content is sent to the Anthropic API for generation and evaluation whe
 
 Proctoring signals are automated indicators, not proof of cheating — the report says so and links the evidence (snapshots, timeline, recording) for review.
 
+**Network access:** `npm run dev` and `npm start` listen on `127.0.0.1` only. The app has no login, so anyone who can reach it can read your recordings and use your API key — don't expose it to a network (e.g. `-H 0.0.0.0`) without adding authentication first.
+
 ## Modules
 
 The codebase is organised into modules, and the git history adds them one commit at a time in dependency order:
@@ -118,11 +120,14 @@ src/
 scripts/fetch-models.mjs    copies the MediaPipe face-tracking model into public/ on install
 ```
 
-## Development tips
+## Development
 
+- `npm test` — unit and lifecycle tests (Vitest; demo mode with a throwaway data directory, no API calls)
 - `npm run typecheck` — TypeScript check
+- CI (`.github/workflows/ci.yml`) runs type check, tests and a production build on every push and pull request
 - `http://localhost:3000/interviews/<id>/room?fakeCamera=1` — synthetic camera for testing the room without hardware (development builds only)
 - Set `DEMO_MODE=1` to force demo mode even with a key configured
+- Set `DATA_DIR` to store data somewhere other than `./data`
 
 ## License
 
