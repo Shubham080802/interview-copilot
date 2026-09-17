@@ -149,7 +149,7 @@ export function InterviewOverview({ id }: { id: string }) {
                 <ul className="mt-2 space-y-2 text-sm text-slate-600">
                   <li>• Use Chrome or Edge for voice answers (speech recognition). You can always type instead.</li>
                   <li>• Keep your camera on for the whole interview — if it turns off or is covered, the interview pauses until it&apos;s back.</li>
-                  <li>• Be alone: you&apos;ll record a short voice check first. If another voice is heard nearby you get a warning, and if it&apos;s heard again within 2 minutes the interview ends automatically.</li>
+                  <li>• Be alone: you&apos;ll record a short voice check first. If another voice is heard nearby you get a warning, and if it&apos;s heard again within 2 minutes the interview ends automatically. If someone is heard helping you, the interview is cancelled immediately and not scored.</li>
                   <li>• Sit in a quiet, well-lit room facing the camera.</li>
                   {i.config.proctoring && <li>• Proctoring is on: stay in frame, alone, in full screen, and don&apos;t switch tabs or paste answers.</li>}
                   {i.config.recordVideo && <li>• The voice conversation between you and the interviewer is recorded as audio (no video).</li>}

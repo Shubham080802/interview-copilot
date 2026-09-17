@@ -210,7 +210,7 @@ export function NewInterviewForm({ aiEnabled, zoomConfigured }: { aiEnabled: boo
           <input type="checkbox" checked disabled aria-label="Only you — voice monitored (required)" className="mt-0.5 h-4 w-4 accent-emerald-600" />
           <span>
             <span className="block text-sm font-medium">Only you — voice monitored, required</span>
-            <span className="mt-0.5 block text-xs text-slate-600">You record a short voice check before starting. If another person&apos;s voice is heard nearby you get a warning; if it&apos;s heard again within 2 minutes, the interview ends automatically. Voice analysis runs on your device only.</span>
+            <span className="mt-0.5 block text-xs text-slate-600">You record a short voice check before starting. If another person&apos;s voice is heard nearby you get a warning; if it&apos;s heard again within 2 minutes, the interview ends automatically. If that person is heard helping with the interview, it is cancelled immediately (&ldquo;Cheating determined&rdquo;) and not scored. Voice analysis runs on your device; speech recognition is provided by your browser.</span>
           </span>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
