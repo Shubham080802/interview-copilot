@@ -21,6 +21,8 @@ export function Report({ id }: { id: string }) {
   if (!data) return <div className="flex items-center gap-2 text-slate-500"><Spinner /> Loading report…</div>;
   const { interview: i } = data;
 
+  if (i.status === "cancelled") return <CancelledReport id={id} data={data} />;
+
   if (!i.evaluation) {
     return (
       <Card className="py-10 text-center">
@@ -427,6 +429,61 @@ function Coach({ id, demo }: { id: string; demo: boolean }) {
 }
 
 /* ------------------------------ Integrity ------------------------------ */
+
+/* ------------------------- Cancelled for cheating ------------------------- */
+
+function CancelledReport({ id, data }: { id: string; data: InterviewData }) {
+  const { interview: i, proctorEvents } = data;
+  const [tab, setTab] = useState<"integrity" | "audio">("integrity");
+  const help = proctorEvents.filter((e) => e.type === "assistance" && e.severity === "high");
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap gap-2">
+            <Badge tone="red">Cancelled — cheating determined</Badge>
+            <Badge>{formatDate(i.createdAt)}</Badge>
+          </div>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight">{i.config.role} at {i.config.company}</h1>
+          <p className="text-sm text-slate-500">{i.config.rounds.map((r) => ROUND_LABELS[r]).join(" · ")}</p>
+        </div>
+        <div className="no-print flex flex-wrap gap-2">
+          <a href={`/api/interviews/${id}/export?format=json`} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-slate-50"><FileJson className="h-4 w-4" /> JSON</a>
+          <a href={`/api/interviews/${id}/export?format=md`} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-slate-50"><FileText className="h-4 w-4" /> Markdown</a>
+        </div>
+      </div>
+
+      <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-5 text-rose-900">
+        <div className="text-lg font-semibold">Cheating determined. This interview was cancelled.</div>
+        <p className="mt-1 text-sm">
+          Another person near the candidate was heard helping with the interview, so it was stopped immediately and is not scored. It doesn&apos;t count toward your progress or study plan.
+        </p>
+        {help.map((e) => (
+          <div key={e.id} className="mt-3 rounded-lg bg-white/70 p-3 text-sm">
+            <div className="text-xs font-semibold uppercase text-rose-700">Evidence · {new Date(e.at).toLocaleTimeString()}</div>
+            <p className="mt-1">{e.detail}</p>
+          </div>
+        ))}
+        <p className="mt-3 text-xs text-rose-800/80">Detection is automated. Review the integrity timeline{i.hasRecording ? " and the conversation audio" : ""} before relying on it.</p>
+      </div>
+
+      <div className="no-print flex gap-1 overflow-x-auto border-b border-slate-200">
+        {([["integrity", `Integrity (${proctorEvents.length})`], ...(i.hasRecording ? [["audio", "Conversation audio"]] : [])] as const).map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key as "integrity" | "audio")} className={cx("whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium transition", tab === key ? "border-brand-600 text-brand-700" : "border-transparent text-slate-500 hover:text-slate-800")}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "integrity" && <Integrity data={data} />}
+      {tab === "audio" &&
+        i.recordingSegments.map((segment) => (
+          <Card key={segment}>
+            <audio controls preload="metadata" src={`/api/interviews/${id}/recording?segment=${segment}`} className="w-full" />
+          </Card>
+        ))}
+    </div>
+  );
+}
 
 function Integrity({ data }: { data: InterviewData }) {
   const report = data.interview.integrity;
