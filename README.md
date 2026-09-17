@@ -10,6 +10,7 @@ AI mock interviews tailored to the company and role you're targeting — run as 
 | **2. Prepare** | Claude researches the company's current work on the web (products, launches, tech stack, interview style), reads your profile/resume and your **history from past interviews**, then designs the questions — avoiding repeats and deliberately probing past weak spots. |
 | **3. Interview (video mode)** | An AI interviewer asks each question out loud. You answer by voice (live speech-to-text) or typing; coding questions open a code editor (JavaScript can be run in-browser). The interviewer asks follow-ups when an answer is vague or incomplete, and you can **ask clarifying questions** (scope, constraints, assumptions) — the interviewer answers without giving away the solution, and good clarifying questions count in your evaluation. |
 | **Camera on, always** | Every interview runs on camera. If the camera turns off, is taken by another app, or is covered (black image), the interview **pauses**: the question is hidden, the timer stops, and the server refuses answers until the camera is back. Each gap is logged in the integrity report. |
+| **Only you (voice monitored)** | Before starting, you record a short voice check. During the interview, speech on your microphone is compared with your voice: if **another person's voice is heard nearby**, a warning appears with a 2-minute countdown; if another voice is heard again within those 2 minutes (after a 10-second reaction window), **the interview ends automatically**. Detections are logged with snapshots and their time in the conversation audio, and the API refuses to continue a terminated interview. |
 | **Conversation recording (audio only)** | The recording contains only the spoken conversation — your microphone and the interviewer's voice mixed into one audio track. **No video of you is recorded.** The interviewer speaks with an in-browser neural voice (Piper TTS), because browser speech synthesis can't be captured by web pages; if that voice can't load, the browser voice is used and only your side is recorded. |
 | **4. Proctoring** | Runs in parallel: camera face tracking (out of frame, multiple people, looking away), tab switches, window focus loss, leaving full screen, pasting, extended displays. Flags include snapshots and produce an auditable integrity score. The session can be recorded. |
 | **5. Evaluation** | Every answer gets a score, strengths, improvements, missed points, a model answer and a coaching tip. Rounds and the overall interview get scores, a hire recommendation, communication analysis (pace, filler words) and an action plan. |
@@ -77,11 +78,22 @@ Everything is stored locally in `data/` (git-ignored):
 
 Interview content is sent to the Anthropic API for generation and evaluation when AI mode is on. The interviewer's voice is generated entirely in your browser; its ~63 MB voice model is downloaded once from Hugging Face and cached (no interview content is sent there). Deleting an interview removes its answers, recording and snapshots.
 
+**Voice monitoring** runs entirely in the browser: the voice sample, speaker profile and microphone audio used for detection never leave the device. Speech is found with Silero VAD (so music and noise are ignored), and each 2-second speech window is compared with the enrolled voice using a WeSpeaker ResNet34 speaker embedding (cosine similarity below 0.45 = a different speaker; in offline calibration with 12 voices, same-speaker windows never scored below 0.64). A microphone can't measure distance, so "nearby" (≈10 m) is approximated by loudness: voices more than 26 dB quieter than yours are ignored. Two mismatching windows within 15 s count as one detection. Known limits: voices that overlap exactly with yours are harder to detect, very similar voices can be missed, and detection pauses while the interviewer is speaking.
+
 **Camera enforcement** is checked in two places: the interview room watches the video track and picture (ended, muted, or near-black frames for 3s), and sends a heartbeat every 5 seconds. The API rejects starting, answering and clarifying questions unless a camera-on heartbeat arrived within the last 15 seconds.
 
 Proctoring signals are automated indicators, not proof of cheating — the report says so and links the evidence (snapshots, timeline, recording) for review.
 
 **Network access:** `npm run dev` and `npm start` listen on `127.0.0.1` only. The app has no login, so anyone who can reach it can read your recordings and use your API key — don't expose it to a network (e.g. `-H 0.0.0.0`) without adding authentication first.
+
+## Third-party models
+
+| Model | Used for | License |
+|---|---|---|
+| [MediaPipe Face Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker) | Face tracking (proctoring) | Apache 2.0 |
+| [Piper](https://github.com/rhasspy/piper) voice `en_US-hfc_female-medium` via [piper-tts-web](https://github.com/Mintplex-Labs/piper-tts-web) | Interviewer voice | MIT (voice model: see its model card) |
+| [WeSpeaker ResNet34 (pyannote/wespeaker-voxceleb-resnet34-LM)](https://huggingface.co/pyannote/wespeaker-voxceleb-resnet34-LM), ONNX export by [onnx-community](https://huggingface.co/onnx-community/wespeaker-voxceleb-resnet34-LM) | Telling your voice apart from others | CC BY 4.0 |
+| [Silero VAD](https://github.com/snakers4/silero-vad) | Detecting speech | MIT |
 
 ## Deployment (Vercel)
 
@@ -115,6 +127,7 @@ The codebase is organised into modules, and the git history adds them one commit
 | 7 | Proctoring | Face tracking, browser integrity signals, integrity score, snapshots | `src/lib/client/proctoring.ts`, `src/lib/integrity.ts`, `api/.../proctor`, `api/snapshots` |
 | 8 | Export | Markdown / HTML report generation | `src/lib/export.ts` |
 | 9 | Interview service & API | Orchestration and REST endpoints | `src/lib/service.ts`, `src/app/api/` |
+| 10b | Voice monitoring | Speaker features, warn/terminate policy, in-browser enrollment and monitoring | `src/lib/voice-id/`, `src/lib/client/voice-monitor.ts`, `public/worklets/pcm-capture.js` |
 | 10 | Media & recording | Camera, speech recognition, interviewer neural voice + audio mixer, audio-only conversation recording | `src/lib/client/media.ts`, `src/lib/client/interviewer-voice.ts`, `api/.../recording` |
 | 11 | UI foundation | Layout, design system, data hooks | `src/app/layout.tsx`, `globals.css`, `src/components/`, `src/lib/client/api.ts`, `useInterview.ts` |
 | 12 | Dashboard & setup | Dashboard, profile, interview setup and overview | `src/app/page.tsx`, `profile/`, `interviews/new/`, `interviews/[id]/` |
