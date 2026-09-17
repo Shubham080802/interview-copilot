@@ -17,6 +17,11 @@ export const OTHER_VOICE_POLICY = {
   confirmSpanMs: 15_000,
   /** After a warning, another detection within this window ends the interview. */
   warningMs: 120_000,
+  /**
+   * Speech right after a warning is usually the same sentence finishing; give the candidate time to
+   * react before a repeat can terminate the interview.
+   */
+  graceAfterWarningMs: 10_000,
 } as const;
 
 export interface SpeechWindow {
@@ -33,6 +38,7 @@ export type VoiceDecision =
 export class OtherVoicePolicy {
   private mismatches: number[] = [];
   private warningEndsAt: number | null = null;
+  private graceEndsAt = 0;
   private terminated = false;
 
   constructor(
@@ -49,6 +55,7 @@ export class OtherVoicePolicy {
     if (this.terminated) return { kind: "none" };
     if (this.warningEndsAt !== null && window.at > this.warningEndsAt) this.warningEndsAt = null;
     if (!this.isOtherNearbyVoice(window)) return { kind: "none" };
+    if (window.at < this.graceEndsAt) return { kind: "none" }; // still within the reaction time after a warning
 
     this.mismatches = this.mismatches.filter((t) => window.at - t <= this.config.confirmSpanMs);
     this.mismatches.push(window.at);
@@ -60,6 +67,7 @@ export class OtherVoicePolicy {
       return { kind: "terminate", similarity: window.similarity };
     }
     this.warningEndsAt = window.at + this.config.warningMs;
+    this.graceEndsAt = window.at + this.config.graceAfterWarningMs;
     return { kind: "warn", warningEndsAt: this.warningEndsAt, similarity: window.similarity };
   }
 
@@ -71,6 +79,9 @@ export class OtherVoicePolicy {
 
   /** Time spent paused (e.g. camera off) shouldn't use up the candidate's warning window. */
   extendWarning(ms: number) {
-    if (this.warningEndsAt !== null) this.warningEndsAt += ms;
+    if (this.warningEndsAt !== null) {
+      this.warningEndsAt += ms;
+      this.graceEndsAt += ms;
+    }
   }
 }

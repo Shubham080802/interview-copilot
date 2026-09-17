@@ -39,6 +39,17 @@ describe("OtherVoicePolicy", () => {
     expect(policy.observe(other(94_000)).kind).toBe("none");
   });
 
+  it("gives the candidate time to react: speech right after a warning doesn't terminate", () => {
+    const policy = new OtherVoicePolicy(CANDIDATE_DB);
+    policy.observe(other(0));
+    expect(policy.observe(other(2000)).kind).toBe("warn");
+    // The same sentence continuing for a few seconds after the warning.
+    for (const t of [3000, 4000, 5000, 6000, 7000]) expect(policy.observe(other(t)).kind).toBe("none");
+    // Heard again after the grace period (but within 2 minutes) → terminate.
+    policy.observe(other(2000 + P.graceAfterWarningMs + 1000));
+    expect(policy.observe(other(2000 + P.graceAfterWarningMs + 3000)).kind).toBe("terminate");
+  });
+
   it("clears the warning when the voice isn't heard again within 2 minutes", () => {
     const policy = new OtherVoicePolicy(CANDIDATE_DB);
     policy.observe(other(0));
