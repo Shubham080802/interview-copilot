@@ -206,6 +206,13 @@ export function NewInterviewForm({ aiEnabled, zoomConfigured }: { aiEnabled: boo
             <span className="mt-0.5 block text-xs text-slate-600">Every interview runs on camera. If the camera turns off or is covered, the interview pauses until it&apos;s back and the gap is recorded.</span>
           </span>
         </div>
+        <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+          <input type="checkbox" checked disabled aria-label="Only you — voice monitored (required)" className="mt-0.5 h-4 w-4 accent-emerald-600" />
+          <span>
+            <span className="block text-sm font-medium">Only you — voice monitored, required</span>
+            <span className="mt-0.5 block text-xs text-slate-600">You record a short voice check before starting. If another person&apos;s voice is heard nearby you get a warning; if it&apos;s heard again within 2 minutes, the interview ends automatically. Voice analysis runs on your device only.</span>
+          </span>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Toggle checked={c.proctoring} onChange={(v) => set("proctoring", v)} label="Proctoring" hint="Camera face tracking (absence, extra people, looking away), tab switching, paste and full-screen monitoring." />
           <Toggle checked={c.recordVideo} onChange={(v) => set("recordVideo", v)} label="Record the conversation" hint="Saves the voice conversation between you and the interviewer (audio only — no video) so you can replay it in the learning session." />
