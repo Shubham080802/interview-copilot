@@ -15,6 +15,7 @@ export type InterviewStatus =
   | "in_progress"
   | "evaluating"
   | "completed"
+  | "cancelled" // ended for cheating: not evaluated
   | "failed";
 
 export interface ResearchBrief {
@@ -87,6 +88,7 @@ export type ProctorEventType =
   | "camera_off"
   | "other_voice"
   | "terminated"
+  | "assistance"
   | "note";
 
 export interface ProctorEvent {
@@ -108,6 +110,8 @@ export interface IntegrityReport {
   notes: string[];
   /** Set when the interview was ended automatically (absent on older reports). */
   terminatedReason?: string | null;
+  /** True when another person was determined to be helping the candidate (absent on older reports). */
+  cheatingDetermined?: boolean;
 }
 
 export interface Evaluation {

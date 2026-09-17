@@ -4,9 +4,10 @@ import { aiEnabled, describeError } from "./ai/client";
 import * as ai from "./ai/engine";
 import * as demo from "./demo";
 import { computeIntegrity } from "./integrity";
+import { heuristicAssistanceCheck, isCheating } from "./voice-id/assistance";
 import { basicJobPosting, extractPdfText, ImportError, isPdf, safeFetchText, scrapeJobPage } from "./importers";
 import * as repo from "./repo";
-import type { ClarificationReply, JobPosting, ResumeProfile, RoundType } from "./schemas";
+import type { AssistanceCheck, ClarificationReply, JobPosting, ResumeProfile, RoundType } from "./schemas";
 import type { Clarification, Evaluation, Interview, InterviewResponse } from "./types";
 import { createZoomMeeting, zoomConfigured } from "./zoom";
 
@@ -304,4 +305,46 @@ export async function importJobPosting(source: { url?: string; text?: string }):
     method: "basic",
     warning: scraped!.fromStructuredData ? undefined : "Imported without AI — double-check the role, company and requirements.",
   };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Another person helping the candidate                               */
+/* ------------------------------------------------------------------ */
+
+export const CHEATING_MESSAGE = "Cheating determined. Good Bye";
+
+/**
+ * Judges speech recognized from another voice near the candidate. Clear, interview-related help cancels
+ * the interview on the spot (it is not evaluated); weaker signals are kept as evidence only.
+ */
+export async function checkAssistance(
+  interview: Interview,
+  input: { questionId: string; prompt: string; transcript: string },
+): Promise<{ cancelled: boolean; message?: string; check: AssistanceCheck; method: "ai" | "basic" }> {
+  const question = interview.plan?.rounds.flatMap((r) => r.questions).find((q) => q.id === input.questionId) ?? null;
+  let check: AssistanceCheck | null = null;
+  let method: "ai" | "basic" = "basic";
+  if (interview.generatedBy === "ai" && aiEnabled()) {
+    try {
+      check = await ai.checkForAssistance({ config: interview.config, question, prompt: input.prompt, transcript: input.transcript });
+      method = "ai";
+    } catch (err) {
+      console.warn("[assistance]", describeError(err));
+    }
+  }
+  check ??= heuristicAssistanceCheck({ transcript: input.transcript, question, prompt: input.prompt });
+
+  const at = new Date().toISOString();
+  const heard = check.evidence_quote || input.transcript.slice(0, 200);
+  if (isCheating(check)) {
+    await repo.addProctorEvent({ interviewId: interview.id, at, type: "assistance", severity: "high", detail: `${check.reason} Heard: "${heard}"`, durationSec: 0, snapshot: null });
+    await repo.addProctorEvent({ interviewId: interview.id, at, type: "terminated", severity: "high", detail: `cheating determined — ${check.reason}`, durationSec: 0, snapshot: null });
+    const integrity = computeIntegrity(await repo.listProctorEvents(interview.id));
+    await repo.updateInterview(interview.id, { status: "cancelled", endedAt: at, integrity });
+    return { cancelled: true, message: CHEATING_MESSAGE, check, method };
+  }
+  if (check.related_to_interview && check.confidence !== "low") {
+    await repo.addProctorEvent({ interviewId: interview.id, at, type: "assistance", severity: "medium", detail: `${check.reason} Heard: "${heard}"`, durationSec: 0, snapshot: null });
+  }
+  return { cancelled: false, check, method };
 }

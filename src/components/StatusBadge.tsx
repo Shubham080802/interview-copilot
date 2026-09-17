@@ -7,6 +7,7 @@ const MAP: Record<InterviewStatus, { label: string; tone: "slate" | "green" | "a
   in_progress: { label: "In progress", tone: "amber" },
   evaluating: { label: "Evaluating", tone: "blue" },
   completed: { label: "Completed", tone: "green" },
+  cancelled: { label: "Cancelled — cheating", tone: "red" },
   failed: { label: "Needs attention", tone: "red" },
 };
 

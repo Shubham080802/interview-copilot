@@ -13,6 +13,7 @@ const WEIGHTS: Record<ProctorEventType, number> = {
   camera_off: 10,
   other_voice: 15,
   terminated: 0, // termination itself sets the level; the detections that caused it carry the penalty
+  assistance: 10, // suspected help kept as evidence; determined cheating zeroes the score below
   note: 0,
 };
 
@@ -29,6 +30,7 @@ export const EVENT_LABELS: Record<ProctorEventType, string> = {
   camera_off: "Camera off / blocked",
   other_voice: "Another voice nearby",
   terminated: "Interview ended automatically",
+  assistance: "Someone nearby helping",
   note: "Note",
 };
 
@@ -48,9 +50,11 @@ export function computeIntegrity(events: ProctorEvent[]): IntegrityReport {
     if (["no_face", "looking_away", "tab_hidden", "window_blur", "camera_off"].includes(e.type)) awaySeconds += e.durationSec;
   }
   const termination = events.find((e) => e.type === "terminated") ?? null;
-  // An automatically terminated interview is always high risk, whatever the other flags add up to.
+  const cheatingDetermined = events.some((e) => e.type === "assistance" && e.severity === "high");
+  // An automatically terminated interview is always high risk, whatever the other flags add up to;
+  // determined cheating scores zero.
   const score = Math.max(0, Math.round(100 - penalty));
-  const cappedScore = termination ? Math.min(score, 25) : score;
+  const cappedScore = cheatingDetermined ? 0 : termination ? Math.min(score, 25) : score;
   const level: IntegrityReport["level"] = termination
     ? "high_risk"
     : score >= 90 ? "clean" : score >= 70 ? "minor_flags" : score >= 45 ? "suspicious" : "high_risk";
@@ -59,11 +63,13 @@ export function computeIntegrity(events: ProctorEvent[]): IntegrityReport {
   const cameraOffSeconds = events.filter((e) => e.type === "camera_off").reduce((s, e) => s + e.durationSec, 0);
   if (counts.camera_off) notes.push(`The camera was off ${counts.camera_off} time(s), about ${Math.round(cameraOffSeconds)}s in total; the interview was paused meanwhile.`);
   if (termination) notes.push(`The interview was ended automatically: ${termination.detail}`);
+  const suspectedHelp = events.filter((e) => e.type === "assistance" && e.severity !== "high").length;
+  if (suspectedHelp) notes.push(`Speech from someone nearby possibly related to the interview was noted ${suspectedHelp} time(s).`);
   if (counts.other_voice) notes.push(`Another person's voice was detected nearby ${counts.other_voice} time(s).`);
   if (counts.multiple_faces) notes.push(`Another person appeared on camera ${counts.multiple_faces} time(s).`);
   if (counts.tab_hidden) notes.push(`The interview tab was hidden ${counts.tab_hidden} time(s).`);
   if (counts.paste) notes.push(`Text was pasted into an answer ${counts.paste} time(s).`);
   if (awaySeconds > 30) notes.push(`About ${Math.round(awaySeconds)}s spent away from the screen or out of frame.`);
   if (!events.length) notes.push("No integrity flags were raised during this session.");
-  return { score: cappedScore, level, counts, awaySeconds: Math.round(awaySeconds), notes, terminatedReason: termination?.detail ?? null };
+  return { score: cappedScore, level, counts, awaySeconds: Math.round(awaySeconds), notes, terminatedReason: termination?.detail ?? null, cheatingDetermined };
 }

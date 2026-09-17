@@ -4,6 +4,7 @@ import { setStorageForTests } from "@/lib/storage";
 import { blobFileStore } from "@/lib/storage/files";
 import type { SqlDb } from "@/lib/storage/sql";
 import { fakeBlobClient, pgliteDb } from "./fakes";
+import { assistanceSuite } from "./suites/assistance";
 import { cameraSuite } from "./suites/camera";
 import { lifecycleSuite } from "./suites/lifecycle";
 
@@ -19,3 +20,4 @@ afterAll(async () => {
 
 lifecycleSuite();
 cameraSuite();
+assistanceSuite();

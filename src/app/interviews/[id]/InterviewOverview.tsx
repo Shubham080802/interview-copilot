@@ -16,7 +16,7 @@ export function InterviewOverview({ id }: { id: string }) {
 
   const status = data?.interview.status;
   useEffect(() => {
-    if (status === "completed") router.replace(`/interviews/${id}/report`);
+    if (status === "completed" || status === "cancelled") router.replace(`/interviews/${id}/report`);
   }, [status, id, router]);
 
   if (error) return <Card className="text-rose-700">{error}</Card>;
