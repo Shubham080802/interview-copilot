@@ -347,7 +347,10 @@ function Coach({ id, demo }: { id: string; demo: boolean }) {
   useEffect(() => {
     api<CoachMessage[]>(`/api/interviews/${id}/coach`).then(setMessages).catch(() => {});
   }, [id]);
-  useEffect(() => bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" }), [messages]);
+  // Block body: scrollIntoView() returns a Promise in newer browsers, and an effect must not return one.
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages]);
 
   async function send(text: string) {
     if (!text.trim() || streaming) return;

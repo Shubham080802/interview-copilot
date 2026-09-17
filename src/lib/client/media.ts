@@ -110,7 +110,9 @@ export function useSpeechRecognition(onFinal: (text: string) => void) {
   const speakingMs = useRef(0);
   const startedAt = useRef<number | null>(null);
 
-  useEffect(() => setSupported(getRecognitionCtor() !== null), []);
+  useEffect(() => {
+    setSupported(getRecognitionCtor() !== null);
+  }, []);
 
   const start = useCallback(() => {
     const Ctor = getRecognitionCtor();
