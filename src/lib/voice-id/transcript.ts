@@ -31,3 +31,19 @@ export const wordCount = (text: string) => (text.trim() ? text.trim().split(/\s+
 export function pruneOlderThan<T extends { at?: number; end?: number }>(items: T[], now: number, maxAgeMs: number): T[] {
   return items.filter((item) => now - (item.at ?? item.end ?? now) <= maxAgeMs);
 }
+
+const words = (text: string) => text.toLowerCase().replace(/[^a-z0-9\s']/g, " ").split(/\s+/).filter(Boolean);
+
+/**
+ * Removes recognized text that is just the interviewer's own voice coming through the speakers (for
+ * example the question being read out), which would otherwise look like someone repeating the question.
+ */
+export function withoutInterviewerEcho(entries: TranscriptEntry[], interviewerLines: string[], minOverlap = 0.6): TranscriptEntry[] {
+  const spoken = new Set(interviewerLines.flatMap(words));
+  return entries.filter((entry) => {
+    const entryWords = words(entry.text);
+    if (!entryWords.length) return false;
+    const echoed = entryWords.filter((w) => spoken.has(w)).length / entryWords.length;
+    return echoed < minOverlap;
+  });
+}

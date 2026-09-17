@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { otherVoiceTranscript, pruneOlderThan, RECOGNITION_DELAY_MS, wordCount } from "@/lib/voice-id/transcript";
+import { otherVoiceTranscript, pruneOlderThan, RECOGNITION_DELAY_MS, withoutInterviewerEcho, wordCount } from "@/lib/voice-id/transcript";
 
 describe("otherVoiceTranscript", () => {
   const entries = [
@@ -29,5 +29,22 @@ describe("helpers", () => {
     expect(wordCount("")).toBe(0);
     expect(pruneOlderThan([{ at: 0 }, { at: 50_000 }], 60_000, 30_000)).toEqual([{ at: 50_000 }]);
     expect(pruneOlderThan([{ end: 0 }, { end: 45_000 }], 60_000, 30_000)).toEqual([{ end: 45_000 }]);
+  });
+});
+
+describe("withoutInterviewerEcho", () => {
+  const question = "Given an array of integers and a target, return the indices of two numbers that add up to the target.";
+
+  it("drops the interviewer's own question picked up by the microphone", () => {
+    const entries = [
+      { text: "given an array of integers and a target return the indices", at: 1 },
+      { text: "psst use a hash map for it", at: 2 },
+    ];
+    expect(withoutInterviewerEcho(entries, [question]).map((e) => e.text)).toEqual(["psst use a hash map for it"]);
+  });
+
+  it("keeps a helper's speech even if it shares a few words with the question", () => {
+    const helper = [{ text: "store each number and its index in a map then look up the target", at: 1 }];
+    expect(withoutInterviewerEcho(helper, [question])).toHaveLength(1);
   });
 });

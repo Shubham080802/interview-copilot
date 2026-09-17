@@ -27,6 +27,7 @@ import { cx, Spinner } from "@/components/ui";
 import { api, formatDuration } from "@/lib/client/api";
 import { useInterviewerVoice } from "@/lib/client/interviewer-voice";
 import { ENROLLMENT_TEXT, useVoiceMonitor, type MonitorStatus } from "@/lib/client/voice-monitor";
+import { otherVoiceTranscript, pruneOlderThan, withoutInterviewerEcho, wordCount, type TranscriptEntry, type VoiceInterval } from "@/lib/voice-id/transcript";
 import { useMediaStream, useRecorder, useSpeechRecognition } from "@/lib/client/media";
 import { useProctoring, type FaceStatus } from "@/lib/client/proctoring";
 import { CAMERA_PROBLEM_TEXT, PROBLEM_GRACE_MS, useCameraGuard, type CameraProblem } from "@/lib/client/camera-guard";
@@ -94,12 +95,23 @@ export function InterviewRoom({ id }: { id: string }) {
     [plan],
   );
 
+  // Everything recognized during the session is kept briefly (with timestamps) so that speech heard while
+  // another voice was detected can be checked for help with the interview.
+  const transcriptLog = useRef<TranscriptEntry[]>([]);
+  const interviewerLines = useRef<string[]>([]);
+  const otherVoiceIntervals = useRef<VoiceInterval[]>([]);
+  const checkAssistanceRef = useRef<() => void>(() => {});
+  const onTranscript = useCallback((text: string, at: number) => {
+    transcriptLog.current = pruneOlderThan([...transcriptLog.current, { text, at }], at, 90_000);
+    checkAssistanceRef.current();
+  }, []);
   const sr = useSpeechRecognition(
     useCallback((text: string) => {
       const append = (a: string) => (a ? `${a} ${text}` : text);
       if (srTarget.current === "ask") setAskText(append);
       else setAnswer(append);
     }, []),
+    { keepAlive: inSession && phase !== "closing", onTranscript },
   );
 
   const proctor = useProctoring({
@@ -126,7 +138,12 @@ export function InterviewRoom({ id }: { id: string }) {
   const [terminatedReason, setTerminatedReason] = useState<string | null>(null);
   const recordingStartedAt = useRef<number | null>(null);
   const finishRef = useRef<(early: boolean) => Promise<void>>(async () => {});
+  const [cheatingMessage, setCheatingMessage] = useState<string | null>(null);
   const monitor = useVoiceMonitor({
+    onOtherVoiceSpeech: (interval) => {
+      otherVoiceIntervals.current = pruneOlderThan([...otherVoiceIntervals.current, interval], Date.now(), 90_000);
+      checkAssistanceRef.current();
+    },
     stream: media.stream,
     active: inSession && phase !== "closing" && !paused,
     suppressed: speaker.speaking,
@@ -196,6 +213,7 @@ export function InterviewRoom({ id }: { id: string }) {
   const say = useCallback(
     async (text: string) => {
       setCaption(text);
+      interviewerLines.current = [...interviewerLines.current.slice(-5), text]; // for filtering speaker echo
       await speaker.speak(text);
     },
     [speaker],
@@ -248,6 +266,60 @@ export function InterviewRoom({ id }: { id: string }) {
     [id, media.stream, plan, proctor, recorder, router, say, speaker, sr],
   );
   finishRef.current = finish;
+
+  /* ------------------ someone nearby helping → cancel ------------------ */
+  const assistState = useRef({ inFlight: false, lastCheckAt: 0, checkedUpTo: 0 });
+
+  const cancelForCheating = useCallback(
+    async (message: string) => {
+      setCheatingMessage(message);
+      setPhase("closing");
+      sr.stop();
+      speaker.cancel();
+      await proctor.finalize(); // upload evidence still queued (e.g. the voice warning and its snapshot)
+      await recorder.stop().catch(() => {});
+      media.stream?.getTracks().forEach((t) => t.stop());
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+      setTimeout(() => router.push(`/interviews/${id}/report`), 6000);
+    },
+    [id, media.stream, proctor, recorder, router, speaker, sr],
+  );
+
+  checkAssistanceRef.current = () => {
+    const state = assistState.current;
+    const current = turnRef.current;
+    const now = Date.now();
+    if (!current || cheatingMessage || state.inFlight || now - state.lastCheckAt < 8000) return;
+    const fresh = withoutInterviewerEcho(
+      transcriptLog.current.filter((e) => e.at > state.checkedUpTo),
+      interviewerLines.current,
+    );
+    if (!fresh.length) return;
+    const transcript = otherVoiceTranscript(fresh, otherVoiceIntervals.current);
+    if (wordCount(transcript) < 5) return;
+
+    state.inFlight = true;
+    state.lastCheckAt = now;
+    state.checkedUpTo = fresh[fresh.length - 1].at;
+    api<{ cancelled: boolean; message: string | null }>(`/api/interviews/${id}/assist-check`, {
+      method: "POST",
+      json: { questionId: current.question.id, prompt: current.prompt, transcript },
+    })
+      .then((result) => {
+        if (result.cancelled) void cancelForCheating(result.message ?? "Cheating determined. Good Bye");
+      })
+      .catch((err) => console.warn("[assist-check]", err))
+      .finally(() => {
+        state.inFlight = false;
+      });
+  };
+
+  // Recognition results arrive a moment after the speech; re-check periodically while in session.
+  useEffect(() => {
+    if (!inSession || phase === "closing") return;
+    const t = setInterval(() => checkAssistanceRef.current(), 3000);
+    return () => clearInterval(t);
+  }, [inSession, phase]);
 
   const goTo = useCallback(
     async (index: number) => {
@@ -416,6 +488,20 @@ export function InterviewRoom({ id }: { id: string }) {
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100">
+      {cheatingMessage && (
+        <div role="alertdialog" aria-labelledby="cheating-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 p-6">
+          <div className="max-w-lg text-center">
+            <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-rose-600/20">
+              <Users className="h-8 w-8 text-rose-400" />
+            </div>
+            <h1 id="cheating-title" className="mt-5 text-3xl font-bold text-rose-400">{cheatingMessage}</h1>
+            <p className="mt-3 text-sm text-slate-300">
+              Another person near you was helping with the interview, so it has been cancelled and will not be scored. The words heard are saved in the integrity report.
+            </p>
+            <p className="mt-6 text-xs text-slate-500">Leaving the interview…</p>
+          </div>
+        </div>
+      )}
       {/* Top bar */}
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
         <div className="min-w-0">
@@ -842,7 +928,7 @@ function SetupPanel(props: {
             I understand that:{" "}
             {props.proctoring && "the session is proctored (camera face tracking, tab/focus changes, full screen and paste monitoring, with snapshots when something is flagged); "}
             {props.recording && "the voice conversation is recorded as audio (no video); "}
-            my microphone is checked for other voices nearby, and if another voice is heard again within 2 minutes of a warning, the interview ends automatically.
+            my microphone is checked for other voices nearby, and if another voice is heard again within 2 minutes of a warning, the interview ends automatically; speech recognized while another voice is heard is checked, and if someone is helping me the interview is cancelled immediately (speech recognition is provided by the browser — in Chrome it uses Google&apos;s online service).
           </span>
         </label>
       )}
