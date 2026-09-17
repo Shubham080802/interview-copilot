@@ -37,6 +37,7 @@ export function toMarkdown(b: InterviewBundle): string {
   }
   if (i.integrity) {
     lines.push(`\n## Integrity (proctoring)\n**${i.integrity.score}/100 — ${i.integrity.level.replace("_", " ")}**\n\n${list(i.integrity.notes)}`);
+    if (i.integrity.terminatedReason) lines.push(`\n> **Interview ended automatically:** ${i.integrity.terminatedReason}.`);
     if (b.proctorEvents.length) {
       lines.push(`\n| Time | Event | Severity | Detail |\n|---|---|---|---|\n${b.proctorEvents.map((e) => `| ${new Date(e.at).toLocaleTimeString()} | ${EVENT_LABELS[e.type]} | ${e.severity} | ${e.detail.replace(/\|/g, "/")} |`).join("\n")}`);
     }

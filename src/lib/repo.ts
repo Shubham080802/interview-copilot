@@ -118,6 +118,7 @@ export async function listInterviews(): Promise<InterviewSummary[]> {
       overallScore: i.evaluation?.overall.overall_score ?? null,
       recommendation: i.evaluation?.overall.hire_recommendation ?? null,
       integrityLevel: i.integrity?.level ?? null,
+      terminated: Boolean(i.integrity?.terminatedReason),
     };
   });
 }

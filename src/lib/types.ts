@@ -147,6 +147,8 @@ export interface InterviewSummary {
   overallScore: number | null;
   recommendation: string | null;
   integrityLevel: IntegrityReport["level"] | null;
+  /** True when the interview was ended automatically (e.g. another voice after a warning). */
+  terminated: boolean;
 }
 
 export interface StoredInsights extends CandidateInsights {

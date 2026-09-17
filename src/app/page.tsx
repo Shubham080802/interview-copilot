@@ -64,7 +64,8 @@ export default async function Dashboard() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      {i.integrityLevel && i.integrityLevel !== "clean" && <Badge tone={i.integrityLevel === "minor_flags" ? "amber" : "red"}>Integrity: {i.integrityLevel.replace("_", " ")}</Badge>}
+                      {i.terminated && <Badge tone="red">Ended automatically</Badge>}
+                      {!i.terminated && i.integrityLevel && i.integrityLevel !== "clean" && <Badge tone={i.integrityLevel === "minor_flags" ? "amber" : "red"}>Integrity: {i.integrityLevel.replace("_", " ")}</Badge>}
                       {i.recommendation && <Badge tone="slate">{REC[i.recommendation]}</Badge>}
                       {i.overallScore !== null && <span className="text-lg font-semibold tabular-nums">{i.overallScore}</span>}
                       <StatusBadge status={i.status} />

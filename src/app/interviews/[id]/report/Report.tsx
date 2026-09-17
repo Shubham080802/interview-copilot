@@ -61,6 +61,15 @@ export function Report({ id }: { id: string }) {
         </div>
       </div>
 
+      {i.integrity?.terminatedReason && (
+        <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-rose-900">
+          <div className="font-semibold">This interview was ended automatically</div>
+          <p className="mt-1 text-sm">
+            Reason: {i.integrity.terminatedReason}. Answers given before that are still evaluated below. The Integrity tab lists each detection with a snapshot and its time in the conversation audio, so you can review it.
+          </p>
+        </div>
+      )}
+
       <div className="no-print flex gap-1 overflow-x-auto border-b border-slate-200">
         {tabs.map((t) => (
           <button key={t.key} onClick={() => setTab(t.key)} className={cx("whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium transition", tab === t.key ? "border-brand-600 text-brand-700" : "border-transparent text-slate-500 hover:text-slate-800")}>
