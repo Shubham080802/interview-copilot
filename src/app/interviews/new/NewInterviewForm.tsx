@@ -208,7 +208,7 @@ export function NewInterviewForm({ aiEnabled, zoomConfigured }: { aiEnabled: boo
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Toggle checked={c.proctoring} onChange={(v) => set("proctoring", v)} label="Proctoring" hint="Camera face tracking (absence, extra people, looking away), tab switching, paste and full-screen monitoring." />
-          <Toggle checked={c.recordVideo} onChange={(v) => set("recordVideo", v)} label="Record the interview" hint="Saves video + audio locally so you can replay it in the learning session." />
+          <Toggle checked={c.recordVideo} onChange={(v) => set("recordVideo", v)} label="Record the conversation" hint="Saves the voice conversation between you and the interviewer (audio only — no video) so you can replay it in the learning session." />
         </div>
         <Field label="Zoom meeting" hint="The AI interview and proctoring run in this app's video room. Add a Zoom meeting if a friend, mentor or human panelist should join too.">
           <div className="flex flex-wrap gap-2">

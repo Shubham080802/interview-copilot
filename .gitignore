@@ -6,5 +6,6 @@ next-env.d.ts
 !.env.example
 data/
 public/mediapipe/
+public/voice/
 .DS_Store
 .vercel

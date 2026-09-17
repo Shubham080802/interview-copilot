@@ -39,7 +39,7 @@ export function Report({ id }: { id: string }) {
     { key: "answers", label: "Answers & practice" },
     { key: "coach", label: "Learning session" },
     { key: "integrity", label: `Integrity${data.proctorEvents.length ? ` (${data.proctorEvents.length})` : ""}` },
-    ...(i.hasRecording ? [{ key: "recording" as Tab, label: "Recording" }] : []),
+    ...(i.hasRecording ? [{ key: "recording" as Tab, label: "Conversation audio" }] : []),
   ];
 
   return (
@@ -76,15 +76,15 @@ export function Report({ id }: { id: string }) {
       {tab === "recording" && (
         <div className="space-y-4">
           {i.recordingSegments.length > 1 && (
-            <p className="text-sm text-slate-500">This recording has {i.recordingSegments.length} parts — a new part starts when the camera reconnects or the interview is resumed.</p>
+            <p className="text-sm text-slate-500">This recording has {i.recordingSegments.length} parts — a new part starts when the interview is resumed after leaving the room.</p>
           )}
           {i.recordingSegments.map((segment) => (
             <Card key={segment}>
               {i.recordingSegments.length > 1 && <div className="mb-2 text-sm font-medium">Part {segment}</div>}
-              <video controls preload="metadata" src={`/api/interviews/${id}/recording?segment=${segment}`} className="w-full rounded-xl bg-black" />
-              <div className="mt-3 flex items-center justify-between text-sm text-slate-500">
-                <span>Replay your interview to review body language, pace and clarity.</span>
-                <a href={`/api/interviews/${id}/recording?segment=${segment}&download=1`} className="font-medium text-brand-600 hover:underline">Download video</a>
+              <audio controls preload="metadata" src={`/api/interviews/${id}/recording?segment=${segment}`} className="w-full" />
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
+                <span>Replay the conversation to review your answers, pace and clarity.</span>
+                <a href={`/api/interviews/${id}/recording?segment=${segment}&download=1`} className="font-medium text-brand-600 hover:underline">Download audio</a>
               </div>
             </Card>
           ))}

@@ -19,7 +19,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
+    "@diffusionstudio/piper-wasm": "^1.0.0",
     "@mediapipe/tasks-vision": "^1.0.1",
+    "@mintplex-labs/piper-tts-web": "^1.0.5",
     "@monaco-editor/react": "^4.7.0",
     "@neondatabase/serverless": "^1.1.0",
     "@vercel/blob": "^2.8.0",

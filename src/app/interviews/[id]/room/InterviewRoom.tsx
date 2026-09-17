@@ -24,12 +24,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CodeEditor } from "@/components/CodeEditor";
 import { cx, Spinner } from "@/components/ui";
 import { api, formatDuration } from "@/lib/client/api";
-import { useMediaStream, useRecorder, useSpeaker, useSpeechRecognition } from "@/lib/client/media";
+import { useInterviewerVoice } from "@/lib/client/interviewer-voice";
+import { useMediaStream, useRecorder, useSpeechRecognition } from "@/lib/client/media";
 import { useProctoring, type FaceStatus } from "@/lib/client/proctoring";
 import { CAMERA_PROBLEM_TEXT, PROBLEM_GRACE_MS, useCameraGuard, type CameraProblem } from "@/lib/client/camera-guard";
 import { useInterview } from "@/lib/client/useInterview";
 import { ROUND_LABELS, type FollowUp, type PlanQuestion, type RoundType } from "@/lib/schemas";
 import type { Clarification, InterviewResponse } from "@/lib/types";
+import type { VoiceStatus } from "@/lib/client/interviewer-voice";
 
 type Phase = "setup" | "intro" | "question" | "submitting" | "reacting" | "closing";
 
@@ -55,7 +57,8 @@ export function InterviewRoom({ id }: { id: string }) {
   const router = useRouter();
   const { data, error: loadError } = useInterview(id);
   const media = useMediaStream();
-  const speaker = useSpeaker();
+  // Interviewer voice + audio mixer: the recording holds only the spoken conversation, no video.
+  const speaker = useInterviewerVoice();
   const recorder = useRecorder(id);
 
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
@@ -128,26 +131,11 @@ export function InterviewRoom({ id }: { id: string }) {
     [id, camera.cameraOn],
   );
 
-  // Recording restarts as a new part whenever the camera stream is replaced (reconnect).
-  const recordingStreamRef = useRef<MediaStream | null>(null);
-  const nextSegmentRef = useRef(1);
-  const startRecording = useCallback(
-    async (stream: MediaStream) => {
-      if (!interview?.config.recordVideo) return;
-      if (recordingStreamRef.current) await recorder.stop();
-      if (recorder.start(stream, nextSegmentRef.current)) {
-        nextSegmentRef.current += 1;
-        recordingStreamRef.current = stream;
-      }
-    },
-    [interview?.config.recordVideo, recorder],
-  );
-
+  // The candidate's microphone feeds the conversation mixer; a camera/mic reconnect just swaps the
+  // source, so the audio recording continues in the same part.
   useEffect(() => {
-    if (inSession && phase !== "closing" && media.stream && recordingStreamRef.current && media.stream !== recordingStreamRef.current) {
-      startRecording(media.stream);
-    }
-  }, [inSession, phase, media.stream, startRecording]);
+    speaker.mixer?.setMicrophone(media.stream);
+  }, [speaker.mixer, media.stream]);
 
   // Attach the camera stream to the <video>.
   useEffect(() => {
@@ -260,8 +248,9 @@ export function InterviewRoom({ id }: { id: string }) {
     if (!interview || !plan || !media.stream) return;
     if (!camera.cameraOn) return setActionError("Turn your camera on to start — the interview runs with the camera on throughout.");
     setActionError("");
-    // Request full screen synchronously inside the click (user gesture); never block on it.
+    // Request full screen and unlock audio synchronously inside the click (user gesture); never block on them.
     if (proctoringOn && !document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
+    const audioUnlocked = speaker.mixer?.resume().catch(() => {});
     try {
       await confirmPresence();
       await api(`/api/interviews/${id}/start`, { method: "POST", json: {} });
@@ -269,8 +258,9 @@ export function InterviewRoom({ id }: { id: string }) {
       setActionError((e as Error).message);
       return;
     }
-    nextSegmentRef.current = Math.max(0, ...interview.recordingSegments) + 1;
-    await startRecording(media.stream);
+    await audioUnlocked;
+    // Resuming an interview (after leaving the room) continues the recording in a new part.
+    if (interview.config.recordVideo && speaker.mixer) recorder.start(speaker.mixer.recordStream, Math.max(0, ...interview.recordingSegments) + 1);
 
     const answered = new Set((data?.responses ?? []).filter((r) => !r.isFollowUp).map((r) => r.questionId));
     setAnsweredCount(answered.size);
@@ -416,7 +406,7 @@ export function InterviewRoom({ id }: { id: string }) {
               <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" /> Proctored{proctor.flagCount > 0 && ` · ${proctor.flagCount} flag${proctor.flagCount > 1 ? "s" : ""}`}
             </span>
           )}
-          {recorder.recording && <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-2.5 py-1 text-rose-300"><Circle className="h-2.5 w-2.5 animate-pulse fill-current" /> REC</span>}
+          {recorder.recording && <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-2.5 py-1 text-rose-300"><Circle className="h-2.5 w-2.5 animate-pulse fill-current" /> REC · audio</span>}
           <button onClick={() => speaker.setEnabled(!speaker.enabled)} className="rounded-full bg-white/10 p-1.5 hover:bg-white/20" title={speaker.enabled ? "Mute interviewer voice" : "Unmute interviewer voice"}>
             {speaker.enabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
           </button>
@@ -517,6 +507,11 @@ export function InterviewRoom({ id }: { id: string }) {
               faceStatus={proctoringOn ? proctor.faceStatus : null}
               proctoring={proctoringOn}
               recording={interview.config.recordVideo}
+              voiceStatus={speaker.status}
+              voiceProgress={speaker.progress}
+              voiceError={speaker.error}
+              onRetryVoice={speaker.retry}
+              onUseBrowserVoice={speaker.switchToBrowserVoice}
               consent={consent}
               setConsent={setConsent}
               autoListen={autoListen}
@@ -663,6 +658,11 @@ function SetupPanel(props: {
   faceStatus: FaceStatus | null;
   proctoring: boolean;
   recording: boolean;
+  voiceStatus: VoiceStatus;
+  voiceProgress: number;
+  voiceError: string;
+  onRetryVoice: () => void;
+  onUseBrowserVoice: () => void;
   consent: boolean;
   setConsent: (v: boolean) => void;
   autoListen: boolean;
@@ -679,6 +679,19 @@ function SetupPanel(props: {
       icon: Camera,
     },
     { ok: props.speechSupported, label: props.speechSupported ? "Voice answers supported" : "Voice answers need Chrome/Edge — you can type instead", icon: Mic, optional: true },
+    {
+      ok: props.voiceStatus === "ready",
+      label:
+        props.voiceStatus === "ready"
+          ? `Interviewer voice ready${props.recording ? " — the conversation will be recorded as audio (no video)" : ""}`
+          : props.voiceStatus === "loading"
+            ? `Loading the interviewer voice… ${props.voiceProgress}% (one-time download, cached afterwards)`
+            : props.recording
+              ? "Using the browser voice — only your side of the conversation will be in the recording"
+              : "Using the browser voice",
+      icon: Volume2,
+      optional: true,
+    },
     ...(props.proctoring
       ? [{ ok: props.faceStatus === "ok", label: props.faceStatus === "unavailable" ? "Face tracking unavailable — other proctoring checks stay active" : props.faceStatus === "ok" ? "Your face is clearly visible" : "Position yourself so only your face is in frame", icon: ShieldCheck, optional: props.faceStatus === "unavailable" }]
       : []),
@@ -698,6 +711,23 @@ function SetupPanel(props: {
         ))}
       </ul>
 
+      {props.voiceStatus === "loading" && (
+        <div className="mt-4">
+          <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+            <div className="h-full rounded-full bg-brand-500 transition-all" style={{ width: `${Math.max(3, props.voiceProgress)}%` }} />
+          </div>
+          <button onClick={props.onUseBrowserVoice} className="mt-2 text-xs text-slate-400 underline hover:text-white">
+            Don&apos;t wait — use the browser voice{props.recording ? " (interviewer won't be in the recording)" : ""}
+          </button>
+        </div>
+      )}
+      {props.voiceStatus === "fallback" && props.voiceError && (
+        <p className="mt-3 text-xs text-amber-300">
+          {props.voiceError}{" "}
+          <button onClick={props.onRetryVoice} className="underline hover:text-white">Try again</button>
+        </p>
+      )}
+
       {props.speechSupported && (
         <label className="mt-6 flex items-center gap-2 text-sm text-slate-300">
           <input type="checkbox" className="accent-brand-500" checked={props.autoListen} onChange={(e) => props.setAutoListen(e.target.checked)} />
@@ -711,7 +741,7 @@ function SetupPanel(props: {
           <span>
             I understand this session is {props.proctoring && "proctored (camera face tracking, tab/focus changes, full screen and paste monitoring, with snapshots when something is flagged)"}
             {props.proctoring && props.recording && " and "}
-            {props.recording && "recorded"}. Everything is stored locally on this computer.
+            {props.recording && "recorded as audio (your voice and the interviewer's — no video)"}. Everything is stored locally on this computer.
           </span>
         </label>
       )}
@@ -722,7 +752,7 @@ function SetupPanel(props: {
         <span className="text-xs text-slate-500">{props.proctoring ? "The interview opens in full screen." : ""}{!faceOk && props.cameraReady ? " Waiting for a clear view of your face…" : ""}</span>
         <button
           onClick={props.onStart}
-          disabled={!props.cameraReady || (needsConsent && !props.consent)}
+          disabled={!props.cameraReady || (needsConsent && !props.consent) || props.voiceStatus === "loading"}
           className="rounded-full bg-brand-600 px-6 py-2.5 text-sm font-semibold hover:bg-brand-500 disabled:opacity-40"
         >
           {props.resumed ? "Resume interview" : "Start interview"}

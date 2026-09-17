@@ -38,7 +38,8 @@ export async function GET(req: Request, ctx: IdParams) {
   const { size } = recording;
   const range = /bytes=(\d*)-(\d*)/.exec(req.headers.get("range") ?? "");
   const download = params.has("download");
-  const headers: Record<string, string> = { "Content-Type": "video/webm", "Accept-Ranges": "bytes" };
+  // Recordings hold the voice conversation only (audio/webm). Older video recordings still play as audio.
+  const headers: Record<string, string> = { "Content-Type": "audio/webm", "Accept-Ranges": "bytes" };
   if (download) headers["Content-Disposition"] = `attachment; filename="interview-${interview.id}${segment > 1 ? `-part${segment}` : ""}.webm"`;
 
   if (range && !download) {

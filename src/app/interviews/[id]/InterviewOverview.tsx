@@ -151,7 +151,7 @@ export function InterviewOverview({ id }: { id: string }) {
                   <li>• Keep your camera on for the whole interview — if it turns off or is covered, the interview pauses until it&apos;s back.</li>
                   <li>• Sit in a quiet, well-lit room facing the camera.</li>
                   {i.config.proctoring && <li>• Proctoring is on: stay in frame, alone, in full screen, and don&apos;t switch tabs or paste answers.</li>}
-                  {i.config.recordVideo && <li>• The session is recorded and stored only on this computer.</li>}
+                  {i.config.recordVideo && <li>• The voice conversation between you and the interviewer is recorded as audio (no video).</li>}
                   <li>• Think out loud — the interviewer may ask follow-ups.</li>
                 </ul>
               </Card>

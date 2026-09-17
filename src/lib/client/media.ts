@@ -58,7 +58,7 @@ export function useMediaStream() {
   return { stream, error, request };
 }
 
-/** Development-only synthetic camera + silent mic, for testing the room without hardware. */
+/** Development-only synthetic camera + tone "microphone", for testing the room without hardware. */
 function fakeStream(): MediaStream {
   const canvas = Object.assign(document.createElement("canvas"), { width: 640, height: 360 });
   const ctx = canvas.getContext("2d")!;
@@ -71,7 +71,17 @@ function fakeStream(): MediaStream {
     ctx.arc(320 + Math.sin(t++ / 10) * 60, 180, 50, 0, Math.PI * 2);
     ctx.fill();
   }, 100);
-  return canvas.captureStream(10);
+  // Fake microphone: a quiet 440 Hz tone (starts once the page receives a click, as browsers require).
+  const audio = new AudioContext();
+  const tone = audio.createOscillator();
+  const gain = audio.createGain();
+  gain.gain.value = 0.05;
+  const mic = audio.createMediaStreamDestination();
+  tone.frequency.value = 440;
+  tone.connect(gain).connect(mic);
+  tone.start();
+  document.addEventListener("pointerdown", () => void audio.resume(), { once: true, capture: true });
+  return new MediaStream([...canvas.captureStream(10).getVideoTracks(), ...mic.stream.getAudioTracks()]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -191,65 +201,6 @@ export function useSpeechRecognition(onFinal: (text: string) => void) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Interviewer voice (speech synthesis)                               */
-/* ------------------------------------------------------------------ */
-
-export function useSpeaker() {
-  const [speaking, setSpeaking] = useState(false);
-  const [enabled, setEnabled] = useState(true);
-  const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
-
-  useEffect(() => {
-    if (typeof speechSynthesis === "undefined") return;
-    const pick = () => {
-      const voices = speechSynthesis.getVoices();
-      const preferred = ["Google US English", "Samantha", "Microsoft Aria Online (Natural) - English (United States)", "Microsoft Jenny Online (Natural) - English (United States)"];
-      voiceRef.current =
-        preferred.map((n) => voices.find((v) => v.name === n)).find(Boolean) ??
-        voices.find((v) => v.lang.startsWith("en") && v.localService) ??
-        voices.find((v) => v.lang.startsWith("en")) ??
-        null;
-    };
-    pick();
-    speechSynthesis.addEventListener("voiceschanged", pick);
-    return () => {
-      speechSynthesis.removeEventListener("voiceschanged", pick);
-      speechSynthesis.cancel();
-    };
-  }, []);
-
-  /** Speaks text and resolves when finished (or immediately if voice is off). */
-  const speak = useCallback(
-    (text: string) =>
-      new Promise<void>((resolve) => {
-        if (!enabled || typeof speechSynthesis === "undefined" || !text.trim()) return resolve();
-        speechSynthesis.cancel();
-        const u = new SpeechSynthesisUtterance(text);
-        if (voiceRef.current) u.voice = voiceRef.current;
-        u.rate = 1.02;
-        const done = () => {
-          setSpeaking(false);
-          resolve();
-        };
-        u.onend = done;
-        u.onerror = done;
-        setSpeaking(true);
-        speechSynthesis.speak(u);
-        // Safety net: some browsers never fire onend.
-        setTimeout(done, Math.max(4000, text.length * 90));
-      }),
-    [enabled],
-  );
-
-  const cancel = useCallback(() => {
-    if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
-    setSpeaking(false);
-  }, []);
-
-  return { speaking, speak, cancel, enabled, setEnabled };
-}
-
-/* ------------------------------------------------------------------ */
 /*  Session recording (chunks uploaded as they are produced)          */
 /* ------------------------------------------------------------------ */
 
@@ -260,15 +211,15 @@ export function useRecorder(interviewId: string) {
   const [recording, setRecording] = useState(false);
 
   const segmentRef = useRef(1);
-  /** Starts recording into the given part number (a new part per camera reconnect / resume). */
+  /**
+   * Records the voice conversation (audio only — no video) into the given part number.
+   * A new part is only needed when the interview is resumed after leaving the room.
+   */
   const start = useCallback(
-    (stream: MediaStream, segment: number) => {
-      const candidates = stream.getAudioTracks().length
-        ? ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
-        : ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
-      const mime = candidates.find((m) => MediaRecorder.isTypeSupported(m));
+    (audioStream: MediaStream, segment: number) => {
+      const mime = ["audio/webm;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m));
       if (!mime) return false; // e.g. Safari: skip recording rather than store an unplayable file
-      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 900_000 });
+      const rec = new MediaRecorder(new MediaStream(audioStream.getAudioTracks()), { mimeType: mime, audioBitsPerSecond: 64_000 });
       segmentRef.current = segment;
       seqRef.current = 0;
       rec.ondataavailable = (e) => {

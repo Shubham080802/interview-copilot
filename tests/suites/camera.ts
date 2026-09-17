@@ -89,7 +89,9 @@ export function cameraSuite() {
       expect((await chunk(99, 0, "x")).status).toBe(400);
 
       expect((await repo.getInterview(interview.id))!.recordingSegments).toEqual([1, 2]);
-      expect(await (await recordingGet(new Request("http://test?segment=1"), ctx(interview.id))).text()).toBe("part-one-more-end");
+      const part1 = await recordingGet(new Request("http://test?segment=1"), ctx(interview.id));
+      expect(part1.headers.get("content-type")).toBe("audio/webm"); // voice conversation only, no video
+      expect(await part1.text()).toBe("part-one-more-end");
       expect(await (await recordingGet(new Request("http://test?segment=2"), ctx(interview.id))).text()).toBe("part-two");
       expect((await recordingGet(new Request("http://test?segment=3"), ctx(interview.id))).status).toBe(404);
 

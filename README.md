@@ -9,12 +9,13 @@ AI mock interviews tailored to the company and role you're targeting — run as 
 | **1. Set up** | Import a job posting from its link (or pick the field, role, level and company yourself), add requirements and what you know about the company, and choose rounds: Technical, Coding, Behavioural, System Design, HR. Upload your resume (PDF) once to fill in your profile. |
 | **2. Prepare** | Claude researches the company's current work on the web (products, launches, tech stack, interview style), reads your profile/resume and your **history from past interviews**, then designs the questions — avoiding repeats and deliberately probing past weak spots. |
 | **3. Interview (video mode)** | An AI interviewer asks each question out loud. You answer by voice (live speech-to-text) or typing; coding questions open a code editor (JavaScript can be run in-browser). The interviewer asks follow-ups when an answer is vague or incomplete, and you can **ask clarifying questions** (scope, constraints, assumptions) — the interviewer answers without giving away the solution, and good clarifying questions count in your evaluation. |
-| **Camera on, always** | Every interview runs on camera. If the camera turns off, is taken by another app, or is covered (black image), the interview **pauses**: the question is hidden, the timer stops, and the server refuses answers until the camera is back. Each gap is logged in the integrity report, and recording continues as a new part after reconnecting. |
+| **Camera on, always** | Every interview runs on camera. If the camera turns off, is taken by another app, or is covered (black image), the interview **pauses**: the question is hidden, the timer stops, and the server refuses answers until the camera is back. Each gap is logged in the integrity report. |
+| **Conversation recording (audio only)** | The recording contains only the spoken conversation — your microphone and the interviewer's voice mixed into one audio track. **No video of you is recorded.** The interviewer speaks with an in-browser neural voice (Piper TTS), because browser speech synthesis can't be captured by web pages; if that voice can't load, the browser voice is used and only your side is recorded. |
 | **4. Proctoring** | Runs in parallel: camera face tracking (out of frame, multiple people, looking away), tab switches, window focus loss, leaving full screen, pasting, extended displays. Flags include snapshots and produce an auditable integrity score. The session can be recorded. |
 | **5. Evaluation** | Every answer gets a score, strengths, improvements, missed points, a model answer and a coaching tip. Rounds and the overall interview get scores, a hire recommendation, communication analysis (pace, filler words) and an action plan. |
-| **6. Learning session** | Replay the recording, chat with an AI coach that has your full transcript, and **practice any question again** to get re-scored. |
+| **6. Learning session** | Replay the conversation audio, chat with an AI coach that has your full transcript, and **practice any question again** to get re-scored. |
 | **7. Memory** | Your cumulative strengths, weaknesses, topics to revisit and recurring patterns are updated after each interview and fed into the next one. A 7-day study plan can be generated from them. |
-| **8. Download** | Per interview: JSON, Markdown, HTML, PDF (print), and the video. Everything: one JSON export. |
+| **8. Download** | Per interview: JSON, Markdown, HTML, PDF (print), and the conversation audio. Everything: one JSON export. |
 
 ## Quick start
 
@@ -71,10 +72,10 @@ A typical interview makes about 10–20 API calls (research, plan, one per answe
 Everything is stored locally in `data/` (git-ignored):
 
 - `data/interviews.db` — SQLite: profile, interviews, answers, proctoring events, coach chats, insights
-- `data/recordings/` — session videos (`.webm`)
+- `data/recordings/` — conversation audio (`.webm`, Opus; no video)
 - `data/snapshots/` — proctoring snapshots
 
-Interview content is sent to the Anthropic API for generation and evaluation when AI mode is on. Deleting an interview removes its answers, recording and snapshots.
+Interview content is sent to the Anthropic API for generation and evaluation when AI mode is on. The interviewer's voice is generated entirely in your browser; its ~63 MB voice model is downloaded once from Hugging Face and cached (no interview content is sent there). Deleting an interview removes its answers, recording and snapshots.
 
 **Camera enforcement** is checked in two places: the interview room watches the video track and picture (ended, muted, or near-black frames for 3s), and sends a heartbeat every 5 seconds. The API rejects starting, answering and clarifying questions unless a camera-on heartbeat arrived within the last 15 seconds.
 
@@ -114,7 +115,7 @@ The codebase is organised into modules, and the git history adds them one commit
 | 7 | Proctoring | Face tracking, browser integrity signals, integrity score, snapshots | `src/lib/client/proctoring.ts`, `src/lib/integrity.ts`, `api/.../proctor`, `api/snapshots` |
 | 8 | Export | Markdown / HTML report generation | `src/lib/export.ts` |
 | 9 | Interview service & API | Orchestration and REST endpoints | `src/lib/service.ts`, `src/app/api/` |
-| 10 | Media & recording | Camera, speech recognition, interviewer voice, session recording | `src/lib/client/media.ts`, `api/.../recording` |
+| 10 | Media & recording | Camera, speech recognition, interviewer neural voice + audio mixer, audio-only conversation recording | `src/lib/client/media.ts`, `src/lib/client/interviewer-voice.ts`, `api/.../recording` |
 | 11 | UI foundation | Layout, design system, data hooks | `src/app/layout.tsx`, `globals.css`, `src/components/`, `src/lib/client/api.ts`, `useInterview.ts` |
 | 12 | Dashboard & setup | Dashboard, profile, interview setup and overview | `src/app/page.tsx`, `profile/`, `interviews/new/`, `interviews/[id]/` |
 | 13 | Interview room | Live video interview UI and code editor | `src/app/interviews/[id]/room/`, `src/components/CodeEditor.tsx` |
@@ -130,7 +131,7 @@ src/
     interviews/new          setup form
     interviews/[id]         overview (preparing / ready / evaluating)
     interviews/[id]/room    video interview room
-    interviews/[id]/report  report, practice, coach, integrity, recording
+    interviews/[id]/report  report, practice, coach, integrity, conversation audio
     progress                cross-interview progress + study plan
     api/                    REST endpoints (see route.ts files)
   lib/

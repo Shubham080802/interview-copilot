@@ -10,6 +10,26 @@ const modelDest = path.join(root, "public/mediapipe/face_landmarker.task");
 const MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 
+// Interviewer voice (Piper TTS): ONNX runtime + phonemizer, served locally so the voice works
+// without third-party CDNs and matches the installed runtime version. The voice model itself
+// (~63 MB) is downloaded from Hugging Face on first use and cached by the browser.
+const voiceFiles = [
+  ["node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs", "public/voice/ort/ort-wasm-simd-threaded.mjs"],
+  ["node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm", "public/voice/ort/ort-wasm-simd-threaded.wasm"],
+  ["node_modules/@diffusionstudio/piper-wasm/build/piper_phonemize.wasm", "public/voice/piper/piper_phonemize.wasm"],
+  ["node_modules/@diffusionstudio/piper-wasm/build/piper_phonemize.data", "public/voice/piper/piper_phonemize.data"],
+];
+for (const [from, to] of voiceFiles) {
+  const src = path.join(root, from);
+  if (!fs.existsSync(src)) {
+    console.warn(`[models] missing ${from} — interviewer voice will fall back to the browser voice`);
+    continue;
+  }
+  fs.mkdirSync(path.dirname(path.join(root, to)), { recursive: true });
+  fs.copyFileSync(src, path.join(root, to));
+}
+console.log("[models] copied interviewer voice runtime");
+
 try {
   if (fs.existsSync(wasmSrc)) {
     fs.mkdirSync(wasmDest, { recursive: true });

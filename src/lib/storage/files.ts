@@ -139,7 +139,7 @@ export function blobFileStore(client: BlobClient): FileStore {
         const stale = await chunksOf(id, segment);
         if (stale.length) await client.del(stale.map((b) => b.pathname));
       }
-      await client.put(chunkPath(id, segment, seq), data, { access: "private", contentType: "video/webm", addRandomSuffix: false, allowOverwrite: true });
+      await client.put(chunkPath(id, segment, seq), data, { access: "private", contentType: "audio/webm", addRandomSuffix: false, allowOverwrite: true });
     },
     async listRecordingSegments(id) {
       const segments = new Set<number>();
