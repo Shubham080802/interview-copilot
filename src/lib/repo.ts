@@ -175,6 +175,15 @@ export async function listProctorEvents(interviewId: string): Promise<ProctorEve
   return rows.map((row) => fromJson<ProctorEvent>(row.data)!);
 }
 
+/** The "terminated" event, if the interview was ended automatically (e.g. another voice after a warning). */
+export async function getTermination(interviewId: string): Promise<ProctorEvent | null> {
+  const row = await (await sql()).get(
+    "SELECT data FROM proctor_events WHERE interview_id = ? AND data LIKE ? ORDER BY at LIMIT 1",
+    [interviewId, '%"type":"terminated"%'],
+  );
+  return fromJson<ProctorEvent>(row?.data);
+}
+
 export const SNAPSHOT_NAME_RE = /^[A-Za-z0-9_-]{16}\.jpg$/;
 
 export async function saveSnapshot(dataUrl: string): Promise<string | null> {

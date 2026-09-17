@@ -40,4 +40,24 @@ describe("computeIntegrity", () => {
     const events = Array.from({ length: 50 }, () => event({ type: "paste", severity: "high" }));
     expect(computeIntegrity(events).score).toBe(0);
   });
+
+  it("marks an automatically terminated interview as high risk with the reason", () => {
+    const r = computeIntegrity([
+      event({ type: "other_voice", severity: "high" }),
+      event({ type: "other_voice", severity: "high" }),
+      event({ type: "terminated", severity: "high", detail: "another voice was heard again within 2 minutes of a warning" }),
+    ]);
+    expect(r.level).toBe("high_risk");
+    expect(r.score).toBeLessThanOrEqual(25);
+    expect(r.terminatedReason).toMatch(/another voice/);
+    expect(r.notes.join(" ")).toMatch(/ended automatically/);
+    expect(r.counts.other_voice).toBe(2);
+  });
+
+  it("penalises a single other-voice warning without terminating", () => {
+    const r = computeIntegrity([event({ type: "other_voice", severity: "high" })]);
+    expect(r.terminatedReason).toBeNull();
+    expect(r.score).toBeLessThan(90);
+    expect(r.notes.join(" ")).toMatch(/Another person's voice/);
+  });
 });

@@ -11,6 +11,8 @@ const WEIGHTS: Record<ProctorEventType, number> = {
   copy: 2,
   multiple_screens: 6,
   camera_off: 10,
+  other_voice: 15,
+  terminated: 0, // termination itself sets the level; the detections that caused it carry the penalty
   note: 0,
 };
 
@@ -25,8 +27,12 @@ export const EVENT_LABELS: Record<ProctorEventType, string> = {
   copy: "Copied text",
   multiple_screens: "Extended display detected",
   camera_off: "Camera off / blocked",
+  other_voice: "Another voice nearby",
+  terminated: "Interview ended automatically",
   note: "Note",
 };
+
+export const PROCTOR_EVENT_TYPES = Object.keys(EVENT_LABELS) as [ProctorEventType, ...ProctorEventType[]];
 
 /** Deterministic integrity score from proctoring events (no AI involved, so it is auditable). */
 export function computeIntegrity(events: ProctorEvent[]): IntegrityReport {
@@ -41,17 +47,23 @@ export function computeIntegrity(events: ProctorEvent[]): IntegrityReport {
     penalty += WEIGHTS[e.type] * sev * durationFactor;
     if (["no_face", "looking_away", "tab_hidden", "window_blur", "camera_off"].includes(e.type)) awaySeconds += e.durationSec;
   }
+  const termination = events.find((e) => e.type === "terminated") ?? null;
+  // An automatically terminated interview is always high risk, whatever the other flags add up to.
   const score = Math.max(0, Math.round(100 - penalty));
-  const level: IntegrityReport["level"] =
-    score >= 90 ? "clean" : score >= 70 ? "minor_flags" : score >= 45 ? "suspicious" : "high_risk";
+  const cappedScore = termination ? Math.min(score, 25) : score;
+  const level: IntegrityReport["level"] = termination
+    ? "high_risk"
+    : score >= 90 ? "clean" : score >= 70 ? "minor_flags" : score >= 45 ? "suspicious" : "high_risk";
 
   const notes: string[] = [];
   const cameraOffSeconds = events.filter((e) => e.type === "camera_off").reduce((s, e) => s + e.durationSec, 0);
   if (counts.camera_off) notes.push(`The camera was off ${counts.camera_off} time(s), about ${Math.round(cameraOffSeconds)}s in total; the interview was paused meanwhile.`);
+  if (termination) notes.push(`The interview was ended automatically: ${termination.detail}`);
+  if (counts.other_voice) notes.push(`Another person's voice was detected nearby ${counts.other_voice} time(s).`);
   if (counts.multiple_faces) notes.push(`Another person appeared on camera ${counts.multiple_faces} time(s).`);
   if (counts.tab_hidden) notes.push(`The interview tab was hidden ${counts.tab_hidden} time(s).`);
   if (counts.paste) notes.push(`Text was pasted into an answer ${counts.paste} time(s).`);
   if (awaySeconds > 30) notes.push(`About ${Math.round(awaySeconds)}s spent away from the screen or out of frame.`);
   if (!events.length) notes.push("No integrity flags were raised during this session.");
-  return { score, level, counts, awaySeconds: Math.round(awaySeconds), notes };
+  return { score: cappedScore, level, counts, awaySeconds: Math.round(awaySeconds), notes, terminatedReason: termination?.detail ?? null };
 }

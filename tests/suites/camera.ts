@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { POST as clarifyRoute } from "@/app/api/interviews/[id]/clarify/route";
 import { POST as presenceRoute } from "@/app/api/interviews/[id]/presence/route";
+import { POST as proctorRoute } from "@/app/api/interviews/[id]/proctor/route";
 import { GET as recordingGet, POST as recordingPost } from "@/app/api/interviews/[id]/recording/route";
 import { POST as responsesRoute } from "@/app/api/interviews/[id]/responses/route";
 import { POST as startRoute } from "@/app/api/interviews/[id]/start/route";
@@ -71,6 +72,42 @@ export function cameraSuite() {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe("automatic termination (another voice after a warning)", () => {
+    it("records other-voice events and refuses to continue once terminated", async () => {
+      const interview = await readyInterview();
+      const q = interview.plan!.rounds[0].questions[0];
+      await presenceRoute(json({ cameraOn: true }), ctx(interview.id));
+      expect((await startRoute(json({}), ctx(interview.id))).status).toBe(200);
+
+      const event = (type: string, detail: string) => ({ at: new Date().toISOString(), type, severity: "high", detail, durationSec: 0, snapshot: null });
+      expect((await proctorRoute(json([event("other_voice", "Another voice detected nearby (similarity 0.12)")]), ctx(interview.id))).status).toBe(200);
+      expect(await repo.getTermination(interview.id)).toBeNull();
+      expect((await responsesRoute(json(answerBody(q.id)), ctx(interview.id))).status).toBe(200); // a warning alone doesn't stop the interview
+
+      const reason = "another voice was heard again within 2 minutes of a warning";
+      await proctorRoute(json([event("other_voice", "Another voice detected nearby (similarity 0.09)"), event("terminated", reason)]), ctx(interview.id));
+      expect((await repo.getTermination(interview.id))?.detail).toBe(reason);
+
+      for (const res of [
+        await responsesRoute(json(answerBody(q.id)), ctx(interview.id)),
+        await clarifyRoute(json({ questionId: q.id, prompt: q.prompt, question: "Can I continue?" }), ctx(interview.id)),
+        await startRoute(json({}), ctx(interview.id)),
+      ]) {
+        expect(res.status).toBe(409);
+        expect((await res.json()).code).toBe("terminated");
+      }
+      expect(await repo.listResponses(interview.id)).toHaveLength(1);
+    });
+
+    it("rejects unknown proctoring event types", async () => {
+      const interview = await readyInterview();
+      await presenceRoute(json({ cameraOn: true }), ctx(interview.id));
+      await startRoute(json({}), ctx(interview.id));
+      const res = await proctorRoute(json([{ at: new Date().toISOString(), type: "made_up", severity: "high", detail: "", durationSec: 0, snapshot: null }]), ctx(interview.id));
+      expect(res.status).toBe(400);
     });
   });
 

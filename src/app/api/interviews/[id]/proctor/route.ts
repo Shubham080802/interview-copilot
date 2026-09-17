@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { fail, loadInterview, type IdParams } from "@/lib/api";
+import { PROCTOR_EVENT_TYPES } from "@/lib/integrity";
 import { addProctorEvent, saveSnapshot } from "@/lib/repo";
 
 const EventInput = z.object({
   at: z.string(),
-  type: z.enum(["no_face", "multiple_faces", "looking_away", "tab_hidden", "window_blur", "fullscreen_exit", "paste", "copy", "multiple_screens", "camera_off", "note"]),
+  type: z.enum(PROCTOR_EVENT_TYPES),
   severity: z.enum(["low", "medium", "high"]),
   detail: z.string().max(500).default(""),
   durationSec: z.number().min(0).max(36_000).default(0),

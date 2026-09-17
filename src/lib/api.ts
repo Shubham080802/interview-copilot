@@ -11,6 +11,10 @@ export const CAMERA_REQUIRED_MESSAGE = "Your camera must be on for the whole int
 /** 409 response when the interview's camera heartbeat is missing or stale. */
 export const cameraRequired = () => NextResponse.json({ error: CAMERA_REQUIRED_MESSAGE, code: "camera_required" }, { status: 409 });
 
+/** 409 response once an interview has been ended automatically; it can't be resumed or answered. */
+export const interviewTerminated = (reason: string) =>
+  NextResponse.json({ error: `This interview was ended automatically: ${reason}`, code: "terminated" }, { status: 409 });
+
 export async function loadInterview(ctx: IdParams) {
   const { id } = await ctx.params;
   return await getInterview(id);

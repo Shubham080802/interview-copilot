@@ -85,6 +85,8 @@ export type ProctorEventType =
   | "copy"
   | "multiple_screens"
   | "camera_off"
+  | "other_voice"
+  | "terminated"
   | "note";
 
 export interface ProctorEvent {
@@ -104,6 +106,8 @@ export interface IntegrityReport {
   counts: Partial<Record<ProctorEventType, number>>;
   awaySeconds: number;
   notes: string[];
+  /** Set when the interview was ended automatically (absent on older reports). */
+  terminatedReason?: string | null;
 }
 
 export interface Evaluation {
