@@ -295,6 +295,23 @@ export function useProctoring(opts: {
     [push],
   );
 
+  /**
+   * Records a one-off event (e.g. another voice detected). `force` records it even before the session
+   * is active, such as a note logged while starting.
+   */
+  const recordEvent = useCallback(
+    (type: ProctorEventType, severity: Severity, detail: string, opts: { withSnapshot?: boolean; force?: boolean } = {}) => {
+      const event = { type, severity, detail, durationSec: 0, snapshot: opts.withSnapshot ? snapshot() : null };
+      if (opts.force) {
+        queue.current.push({ ...event, at: new Date().toISOString() });
+        setFlagCount((n) => n + 1);
+      } else {
+        push(event);
+      }
+    },
+    [push, snapshot],
+  );
+
   /** Closes any open conditions and uploads remaining events (call before finishing). */
   const finalize = useCallback(async () => {
     const now = Date.now();
@@ -306,5 +323,5 @@ export function useProctoring(opts: {
     await flush();
   }, [endCondition, flush]);
 
-  return { faceStatus, warning, flagCount, finalize, snapshot, recordCameraGap };
+  return { faceStatus, warning, flagCount, finalize, snapshot, recordCameraGap, recordEvent };
 }

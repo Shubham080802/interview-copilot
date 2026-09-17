@@ -12,6 +12,7 @@ import {
   RotateCcw,
   ShieldCheck,
   SkipForward,
+  Users,
   Video,
   VideoOff,
   Volume2,
@@ -25,6 +26,7 @@ import { CodeEditor } from "@/components/CodeEditor";
 import { cx, Spinner } from "@/components/ui";
 import { api, formatDuration } from "@/lib/client/api";
 import { useInterviewerVoice } from "@/lib/client/interviewer-voice";
+import { ENROLLMENT_TEXT, useVoiceMonitor, type MonitorStatus } from "@/lib/client/voice-monitor";
 import { useMediaStream, useRecorder, useSpeechRecognition } from "@/lib/client/media";
 import { useProctoring, type FaceStatus } from "@/lib/client/proctoring";
 import { CAMERA_PROBLEM_TEXT, PROBLEM_GRACE_MS, useCameraGuard, type CameraProblem } from "@/lib/client/camera-guard";
@@ -117,6 +119,31 @@ export function InterviewRoom({ id }: { id: string }) {
     heartbeat: interview?.status === "ready" || interview?.status === "in_progress",
   });
   const paused = inSession && phase !== "closing" && !camera.cameraOn;
+
+  /* --------------------- only the candidate may speak --------------------- */
+  // The candidate's voice is enrolled before starting; any other nearby voice triggers a warning, and
+  // another one within 2 minutes ends the interview automatically.
+  const [terminatedReason, setTerminatedReason] = useState<string | null>(null);
+  const recordingStartedAt = useRef<number | null>(null);
+  const finishRef = useRef<(early: boolean) => Promise<void>>(async () => {});
+  const monitor = useVoiceMonitor({
+    stream: media.stream,
+    active: inSession && phase !== "closing" && !paused,
+    suppressed: speaker.speaking,
+    onDecision: (decision) => {
+      const started = recordingStartedAt.current;
+      const where = started ? ` at ${formatDuration((Date.now() - started) / 1000)} in the conversation audio` : "";
+      if (decision.kind === "warn") {
+        proctor.recordEvent("other_voice", "high", `Another voice detected nearby (similarity ${decision.similarity.toFixed(2)})${where}`, { withSnapshot: true });
+        return;
+      }
+      const reason = "another voice was heard again within 2 minutes of a warning";
+      proctor.recordEvent("other_voice", "high", `Another voice detected again (similarity ${decision.similarity.toFixed(2)})${where}`, { withSnapshot: true });
+      proctor.recordEvent("terminated", "high", reason);
+      setTerminatedReason(reason);
+      void finishRef.current(true);
+    },
+  });
   const pausedRef = useRef(false);
   pausedRef.current = paused;
   const pauseRef = useRef<{ since: number; reason: CameraProblem } | null>(null);
@@ -187,11 +214,12 @@ export function InterviewRoom({ id }: { id: string }) {
       const { since, reason } = pauseRef.current;
       pauseRef.current = null;
       setStartedAt((s) => s + (Date.now() - since));
+      monitor.extendWarning(Date.now() - since); // a camera pause doesn't use up the voice warning window
       proctor.recordCameraGap(since, CAMERA_PROBLEM_TEXT[reason].title);
       const current = turnRef.current;
       if (current && phase === "question") say(`Thanks, I can see you again. ${current.prompt}`);
     }
-  }, [paused, phase, camera.problem, sr, speaker, proctor, say]);
+  }, [paused, phase, camera.problem, sr, speaker, proctor, say, monitor]);
 
   /* ----------------------------- flow ----------------------------- */
 
@@ -219,6 +247,7 @@ export function InterviewRoom({ id }: { id: string }) {
     },
     [id, media.stream, plan, proctor, recorder, router, say, speaker, sr],
   );
+  finishRef.current = finish;
 
   const goTo = useCallback(
     async (index: number) => {
@@ -247,6 +276,7 @@ export function InterviewRoom({ id }: { id: string }) {
   async function begin() {
     if (!interview || !plan || !media.stream) return;
     if (!camera.cameraOn) return setActionError("Turn your camera on to start — the interview runs with the camera on throughout.");
+    if (monitor.status !== "ready" && monitor.status !== "unavailable") return setActionError("Record your voice sample first, so the interview can tell your voice from anyone else's.");
     setActionError("");
     // Request full screen and unlock audio synchronously inside the click (user gesture); never block on them.
     if (proctoringOn && !document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
@@ -260,7 +290,10 @@ export function InterviewRoom({ id }: { id: string }) {
     }
     await audioUnlocked;
     // Resuming an interview (after leaving the room) continues the recording in a new part.
-    if (interview.config.recordVideo && speaker.mixer) recorder.start(speaker.mixer.recordStream, Math.max(0, ...interview.recordingSegments) + 1);
+    if (interview.config.recordVideo && speaker.mixer && recorder.start(speaker.mixer.recordStream, Math.max(0, ...interview.recordingSegments) + 1)) {
+      recordingStartedAt.current = Date.now();
+    }
+    if (monitor.status === "unavailable") proctor.recordEvent("note", "medium", "Voice monitoring was unavailable in this browser, so other voices could not be detected", { force: true });
 
     const answered = new Set((data?.responses ?? []).filter((r) => !r.isFollowUp).map((r) => r.questionId));
     setAnsweredCount(answered.size);
@@ -401,6 +434,11 @@ export function InterviewRoom({ id }: { id: string }) {
             {camera.cameraOn ? <Video className="h-3.5 w-3.5" /> : <VideoOff className="h-3.5 w-3.5" />}
             {camera.cameraOn ? "Camera on" : inSession ? "Camera off · paused" : "Camera off"}
           </span>
+          {inSession && monitor.status === "ready" && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1" title="Your microphone is checked for other voices nearby (on this device only)">
+              <Users className="h-3.5 w-3.5 text-emerald-400" /> Only you
+            </span>
+          )}
           {proctoringOn && (
             <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1">
               <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" /> Proctored{proctor.flagCount > 0 && ` · ${proctor.flagCount} flag${proctor.flagCount > 1 ? "s" : ""}`}
@@ -496,6 +534,18 @@ export function InterviewRoom({ id }: { id: string }) {
               </div>
             </div>
           )}
+          {inSession && monitor.warningEndsAt && now < monitor.warningEndsAt && !terminatedReason && (
+            <div role="alert" className="flex items-start gap-3 rounded-2xl bg-amber-500/15 p-4 ring-1 ring-amber-400/60">
+              <Users className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" />
+              <div>
+                <p className="font-semibold text-amber-200">Another voice was detected near you</p>
+                <p className="mt-1 text-sm text-amber-100/90">
+                  This interview must be taken alone. If another voice is heard again in the next{" "}
+                  <span className="font-mono font-semibold tabular-nums">{formatDuration((monitor.warningEndsAt - now) / 1000)}</span>, the interview will end automatically.
+                </p>
+              </div>
+            </div>
+          )}
           {!inSession ? (
             <SetupPanel
               name={plan.interviewer_name}
@@ -507,6 +557,11 @@ export function InterviewRoom({ id }: { id: string }) {
               faceStatus={proctoringOn ? proctor.faceStatus : null}
               proctoring={proctoringOn}
               recording={interview.config.recordVideo}
+              monitorStatus={monitor.status}
+              monitorError={monitor.error}
+              enrollProgress={monitor.enrollProgress}
+              onEnroll={monitor.startEnrollment}
+              onCancelEnroll={monitor.cancelEnrollment}
               voiceStatus={speaker.status}
               voiceProgress={speaker.progress}
               voiceError={speaker.error}
@@ -519,10 +574,13 @@ export function InterviewRoom({ id }: { id: string }) {
               onStart={begin}
               error={actionError}
             />
-          ) : phase === "intro" || !turn ? (
+          ) : phase === "intro" || phase === "closing" || !turn ? (
             <div className="grid flex-1 place-items-center rounded-2xl bg-white/5 p-8 text-center ring-1 ring-white/10">
               <div>
-                <p className="text-lg font-medium">{phase === "closing" ? "Wrapping up…" : "Your interviewer is introducing the session"}</p>
+                <p className="text-lg font-medium">
+                  {terminatedReason ? "The interview has ended automatically" : phase === "closing" ? "Wrapping up…" : "Your interviewer is introducing the session"}
+                </p>
+                {terminatedReason && <p className="mx-auto mt-2 max-w-md text-sm text-rose-300">Another voice was heard again within 2 minutes of a warning. Your answers so far will still be evaluated, and this is recorded in the integrity report.</p>}
                 <p className="mt-2 max-w-lg text-sm text-slate-400">{caption}</p>
                 {phase === "closing" && <div className="mt-4 flex items-center justify-center gap-2 text-sm text-slate-300"><Spinner /> Saving your answers, recording and proctoring log</div>}
               </div>
@@ -663,6 +721,11 @@ function SetupPanel(props: {
   voiceError: string;
   onRetryVoice: () => void;
   onUseBrowserVoice: () => void;
+  monitorStatus: MonitorStatus;
+  monitorError: string;
+  enrollProgress: number;
+  onEnroll: () => void;
+  onCancelEnroll: () => void;
   consent: boolean;
   setConsent: (v: boolean) => void;
   autoListen: boolean;
@@ -670,7 +733,7 @@ function SetupPanel(props: {
   onStart: () => void;
   error: string;
 }) {
-  const needsConsent = props.proctoring || props.recording;
+  const needsConsent = true; // voice monitoring always applies
   const faceOk = props.faceStatus === null || props.faceStatus === "ok" || props.faceStatus === "unavailable";
   const checks = [
     {
@@ -679,6 +742,19 @@ function SetupPanel(props: {
       icon: Camera,
     },
     { ok: props.speechSupported, label: props.speechSupported ? "Voice answers supported" : "Voice answers need Chrome/Edge — you can type instead", icon: Mic, optional: true },
+    {
+      ok: props.monitorStatus === "ready",
+      label:
+        props.monitorStatus === "ready"
+          ? "Your voice is enrolled — only your voice should be heard during the interview"
+          : props.monitorStatus === "unavailable"
+            ? "Voice monitoring is unavailable in this browser (this will be noted in the integrity report)"
+            : props.monitorStatus === "loading"
+              ? "Preparing voice monitoring…"
+              : "Record a short voice sample so other voices nearby can be detected",
+      icon: Users,
+      optional: props.monitorStatus === "unavailable",
+    },
     {
       ok: props.voiceStatus === "ready",
       label:
@@ -711,6 +787,30 @@ function SetupPanel(props: {
         ))}
       </ul>
 
+      {(props.monitorStatus === "needs_enrollment" || props.monitorStatus === "enrolling") && (
+        <div className="mt-5 rounded-xl bg-black/30 p-4 ring-1 ring-brand-500/40">
+          <div className="text-sm font-medium">Voice check — read this aloud in your normal voice</div>
+          <p className="mt-2 rounded-lg bg-white/5 p-3 text-sm leading-relaxed text-slate-200">&ldquo;{ENROLLMENT_TEXT}&rdquo;</p>
+          {props.monitorStatus === "enrolling" ? (
+            <>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${Math.max(3, props.enrollProgress)}%` }} />
+              </div>
+              <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
+                <span className="inline-flex items-center gap-1.5"><Mic className="h-3.5 w-3.5 animate-pulse text-rose-400" /> Listening… keep reading until the bar fills</span>
+                <button onClick={props.onCancelEnroll} className="underline hover:text-white">Cancel</button>
+              </div>
+            </>
+          ) : (
+            <button onClick={props.onEnroll} className="mt-3 inline-flex items-center gap-2 rounded-full bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500">
+              <Mic className="h-4 w-4" /> Start voice check
+            </button>
+          )}
+          {props.monitorError && <p className="mt-2 text-xs text-amber-300">{props.monitorError}</p>}
+          <p className="mt-2 text-xs text-slate-500">Analysed on this device only — your voice sample isn&apos;t uploaded or stored.</p>
+        </div>
+      )}
+
       {props.voiceStatus === "loading" && (
         <div className="mt-4">
           <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
@@ -739,9 +839,10 @@ function SetupPanel(props: {
         <label className="mt-4 flex items-start gap-2 rounded-xl bg-black/30 p-3 text-sm text-slate-300 ring-1 ring-white/10">
           <input type="checkbox" className="mt-0.5 accent-brand-500" checked={props.consent} onChange={(e) => props.setConsent(e.target.checked)} />
           <span>
-            I understand this session is {props.proctoring && "proctored (camera face tracking, tab/focus changes, full screen and paste monitoring, with snapshots when something is flagged)"}
-            {props.proctoring && props.recording && " and "}
-            {props.recording && "recorded as audio (your voice and the interviewer's — no video)"}. Everything is stored locally on this computer.
+            I understand that:{" "}
+            {props.proctoring && "the session is proctored (camera face tracking, tab/focus changes, full screen and paste monitoring, with snapshots when something is flagged); "}
+            {props.recording && "the voice conversation is recorded as audio (no video); "}
+            my microphone is checked for other voices nearby, and if another voice is heard again within 2 minutes of a warning, the interview ends automatically.
           </span>
         </label>
       )}
@@ -752,7 +853,12 @@ function SetupPanel(props: {
         <span className="text-xs text-slate-500">{props.proctoring ? "The interview opens in full screen." : ""}{!faceOk && props.cameraReady ? " Waiting for a clear view of your face…" : ""}</span>
         <button
           onClick={props.onStart}
-          disabled={!props.cameraReady || (needsConsent && !props.consent) || props.voiceStatus === "loading"}
+          disabled={
+            !props.cameraReady ||
+            (needsConsent && !props.consent) ||
+            props.voiceStatus === "loading" ||
+            !(props.monitorStatus === "ready" || props.monitorStatus === "unavailable")
+          }
           className="rounded-full bg-brand-600 px-6 py-2.5 text-sm font-semibold hover:bg-brand-500 disabled:opacity-40"
         >
           {props.resumed ? "Resume interview" : "Start interview"}
