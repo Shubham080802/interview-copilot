@@ -121,8 +121,12 @@ export function useVoiceMonitor(opts: {
   /** True while the interviewer is speaking — its sound through the speakers must not be judged. */
   suppressed: boolean;
   onDecision: (decision: Exclude<VoiceDecision, { kind: "none" }>) => void;
+  /** Called for every speech window that sounds like another person nearby (even before it's a confirmed detection). */
+  onOtherVoiceSpeech?: (interval: { start: number; end: number; similarity: number }) => void;
 }) {
   const { stream, active, suppressed, onDecision } = opts;
+  const onOtherVoiceRef = useRef(opts.onOtherVoiceSpeech);
+  onOtherVoiceRef.current = opts.onOtherVoiceSpeech;
   const [status, setStatus] = useState<MonitorStatus>("loading");
   const [error, setError] = useState("");
   const [enrollProgress, setEnrollProgress] = useState(0);
@@ -208,7 +212,12 @@ export function useVoiceMonitor(opts: {
         } else if (modeRef.current === "monitoring" && profileRef.current && policyRef.current) {
           const similarity = cosineSimilarity(embedding, profileRef.current.embedding);
           setLastSimilarity(similarity);
-          const decision = policyRef.current.observe({ at: Date.now(), similarity, levelDb: windowLevel });
+          const observed = { at: Date.now(), similarity, levelDb: windowLevel };
+          if (policyRef.current.isOtherNearbyVoice(observed)) {
+            // The 2 s of audio ended just before inference finished; widen slightly for processing time.
+            onOtherVoiceRef.current?.({ start: observed.at - WINDOW / (SAMPLE_RATE / 1000) - 1000, end: observed.at, similarity });
+          }
+          const decision = policyRef.current.observe(observed);
           if (decision.kind === "warn") setWarningEndsAt(decision.warningEndsAt);
           if (decision.kind !== "none") onDecisionRef.current(decision);
         }
