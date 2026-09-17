@@ -1,5 +1,5 @@
-// Copies MediaPipe WASM runtime into /public and downloads the face landmark model
-// so proctoring works without hitting a CDN at interview time.
+// Prepares browser-side models in /public so interviews don't depend on CDNs at runtime:
+// MediaPipe face tracking, the interviewer voice runtime, and voice-monitoring models.
 import fs from "node:fs";
 import path from "node:path";
 
@@ -44,4 +44,27 @@ try {
   }
 } catch (err) {
   console.warn("[models] could not prepare proctoring model (will fall back to CDN at runtime):", err.message);
+}
+
+// Voice monitoring (only the candidate may speak): a speaker-embedding model to tell the candidate's
+// voice apart from others, and a speech detector so music/noise isn't mistaken for a voice.
+const HF = "https://huggingface.co";
+const voiceMonitorModels = [
+  // WeSpeaker ResNet34 (pyannote/wespeaker-voxceleb-resnet34-LM, CC BY 4.0), 8-bit quantized ONNX export
+  [`${HF}/onnx-community/wespeaker-voxceleb-resnet34-LM/resolve/main/onnx/model_quantized.onnx`, "public/voice/monitor/speaker.onnx"],
+  // Silero VAD v5 (MIT)
+  [`${HF}/onnx-community/silero-vad/resolve/main/onnx/model.onnx`, "public/voice/monitor/vad.onnx"],
+];
+for (const [url, to] of voiceMonitorModels) {
+  const dest = path.join(root, to);
+  if (fs.existsSync(dest)) continue;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+    console.log(`[models] downloaded ${to}`);
+  } catch (err) {
+    console.warn(`[models] could not download ${url} — voice monitoring will be unavailable:`, err.message);
+  }
 }
