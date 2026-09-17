@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { splitIntoSpeechChunks } from "../voice-text";
+import { withOrtInitLock } from "./ort-init-lock";
 
 /*
  * The interview recording contains only the voice conversation: the candidate's microphone and
@@ -141,13 +142,13 @@ export function useInterviewerVoice() {
     setProgress(0);
     try {
       const tts = await import("@mintplex-labs/piper-tts-web");
-      const session = await tts.TtsSession.create({
+      const session = await withOrtInitLock(() => tts.TtsSession.create({
         voiceId: VOICE_ID,
         wasmPaths: WASM_PATHS,
         progress: (p: { loaded: number; total: number }) => {
           if (p.total > 1_000_000) setProgress(Math.min(99, Math.round((p.loaded / p.total) * 100)));
         },
-      });
+      }));
       sessionRef.current = session;
       setProgress(100);
       setVoiceStatus("ready");

@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { averageEmbedding, computeFbank, cosineSimilarity, NUM_MEL_BINS, resampleTo16k, SAMPLE_RATE } from "../voice-id/fbank";
 import { OtherVoicePolicy, type VoiceDecision } from "../voice-id/policy";
+import { withOrtInitLock } from "./ort-init-lock";
 
 /*
  * Voice monitoring: only the candidate may speak during the interview.
@@ -24,18 +25,18 @@ const SPEECH_PROBABILITY = 0.5;
 const SUPPRESS_TAIL_MS = 800; // ignore the room echo right after the interviewer stops talking
 const MIN_ENROLLMENT_CONSISTENCY = 0.55;
 
-type Ort = typeof import("onnxruntime-web");
+type Ort = typeof import("onnxruntime-web/wasm");
 
 /** Loads the ONNX runtime and both models once; all inference is serialized through one queue. */
 class VoiceEngine {
   private queue: Promise<unknown> = Promise.resolve();
-  private vadState: import("onnxruntime-web").Tensor;
+  private vadState: import("onnxruntime-web/wasm").Tensor;
   private vadContext = new Float32Array(VAD_CONTEXT);
 
   private constructor(
     private readonly ort: Ort,
-    private readonly vad: import("onnxruntime-web").InferenceSession,
-    private readonly speaker: import("onnxruntime-web").InferenceSession,
+    private readonly vad: import("onnxruntime-web/wasm").InferenceSession,
+    private readonly speaker: import("onnxruntime-web/wasm").InferenceSession,
   ) {
     this.vadState = new ort.Tensor("float32", new Float32Array(2 * 128), [2, 1, 128]);
   }
@@ -43,15 +44,19 @@ class VoiceEngine {
   private static instance: Promise<VoiceEngine> | null = null;
 
   static load(): Promise<VoiceEngine> {
-    VoiceEngine.instance ??= (async () => {
-      const ort = await import("onnxruntime-web");
+    VoiceEngine.instance ??= withOrtInitLock(async () => {
+      // The WASM-only build: same runtime files (and module instance) as the interviewer voice.
+      const ort = await import("onnxruntime-web/wasm");
       ort.env.wasm.wasmPaths = "/voice/ort/"; // same runtime files the interviewer voice uses
-      const [vad, speaker] = await Promise.all([
-        ort.InferenceSession.create("/voice/monitor/vad.onnx"),
-        ort.InferenceSession.create("/voice/monitor/speaker.onnx"),
-      ]);
+      // The runtime is shared with the interviewer voice and initialized once by whichever feature loads
+      // first, so both must use the same settings. The runtime itself falls back to a single thread
+      // when multi-threading isn't available.
+      ort.env.wasm.numThreads = navigator.hardwareConcurrency;
+      const options = { executionProviders: ["wasm"] };
+      const vad = await ort.InferenceSession.create("/voice/monitor/vad.onnx", options);
+      const speaker = await ort.InferenceSession.create("/voice/monitor/speaker.onnx", options);
       return new VoiceEngine(ort, vad, speaker);
-    })().catch((err) => {
+    }).catch((err) => {
       VoiceEngine.instance = null;
       throw err;
     });
