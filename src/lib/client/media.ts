@@ -74,6 +74,7 @@ function fakeStream(): MediaStream {
     ctx.fill();
   }, 100);
   // Fake microphone: a quiet 440 Hz tone (starts once the page receives a click, as browsers require).
+  // `window.__fakeMic.play(url)` also plays an audio clip "into" the microphone, for end-to-end tests.
   const audio = new AudioContext();
   const tone = audio.createOscillator();
   const gain = audio.createGain();
@@ -83,6 +84,18 @@ function fakeStream(): MediaStream {
   tone.connect(gain).connect(mic);
   tone.start();
   document.addEventListener("pointerdown", () => void audio.resume(), { once: true, capture: true });
+  (window as unknown as { __fakeMic: { play(url: string): Promise<void> } }).__fakeMic = {
+    async play(url: string) {
+      const buffer = await audio.decodeAudioData(await (await fetch(url)).arrayBuffer());
+      const source = audio.createBufferSource();
+      source.buffer = buffer;
+      source.connect(mic);
+      await new Promise<void>((resolve) => {
+        source.onended = () => resolve();
+        source.start();
+      });
+    },
+  };
   return new MediaStream([...canvas.captureStream(10).getVideoTracks(), ...mic.stream.getAudioTracks()]);
 }
 
