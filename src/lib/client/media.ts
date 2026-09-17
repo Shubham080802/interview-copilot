@@ -23,7 +23,9 @@ export function useMediaStream() {
     try {
       const s = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
-        audio: { echoCancellation: true, noiseSuppression: true },
+        // Automatic gain control is off so a distant voice isn't boosted to the candidate's loudness
+        // (voice monitoring uses relative loudness as a proximity signal).
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
       });
       currentRef.current = s;
       setStream(s);
