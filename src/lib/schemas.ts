@@ -179,3 +179,16 @@ export const JobPostingSchema = z.object({
   company_notes: z.string().describe("What the posting says about the company, team, product and mission"),
 });
 export type JobPosting = z.infer<typeof JobPostingSchema>;
+
+/* ------------------------------------------------------------------ */
+/*  Assistance check (another person helping the candidate)            */
+/* ------------------------------------------------------------------ */
+
+export const AssistanceCheckSchema = z.object({
+  related_to_interview: z.boolean().describe("The speech is about the current question or the interview"),
+  helping_candidate: z.boolean().describe("The speech gives the candidate answers, hints, code, facts or tells them what to say"),
+  confidence: z.enum(["low", "medium", "high"]),
+  reason: z.string().describe("One sentence explaining the verdict"),
+  evidence_quote: z.string().describe("The exact words that show help, or empty string"),
+});
+export type AssistanceCheck = z.infer<typeof AssistanceCheckSchema>;

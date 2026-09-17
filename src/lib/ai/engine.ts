@@ -1,6 +1,7 @@
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
 import {
+  AssistanceCheckSchema,
   ClarificationReplySchema,
   FollowUpSchema,
   JobPostingSchema,
@@ -11,6 +12,7 @@ import {
   RetryEvaluationSchema,
   RoundEvaluationSchema,
   StudyPlanSchema,
+  type AssistanceCheck,
   type ClarificationReply,
   type FollowUp,
   type JobPosting,
@@ -225,6 +227,40 @@ Reply the way a real interviewer would, in 1-3 spoken sentences:
 - Do not give away the solution, algorithm or model answer. If they ask for it, decline politely and ask how they would approach it${config.persona === "friendly" ? ", optionally with a gentle nudge" : ""}.
 - If the question is unrelated to the interview, briefly steer back.
 Set gave_hint to true only if your reply points toward the solution beyond clarifying the problem.`,
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/*  3c. Is someone near the candidate helping them?                    */
+/* ------------------------------------------------------------------ */
+
+export async function checkForAssistance(input: {
+  config: InterviewConfig;
+  question: PlanQuestion | null;
+  prompt: string;
+  transcript: string;
+}): Promise<AssistanceCheck> {
+  const { config, question } = input;
+  return structured({
+    schema: AssistanceCheckSchema,
+    effort: "medium",
+    maxTokens: 4000,
+    system:
+      "You are the integrity reviewer for a proctored live interview. A voice other than the candidate's was detected near them. You decide whether that person's speech is helping the candidate with the interview. A wrong 'cheating' verdict cancels an honest candidate's interview, so only report high confidence when the help is clear.",
+    prompt: `Interview: ${config.role} at ${config.company}.
+Current question: ${input.prompt}
+${question ? `Topic: ${question.topic}\nWhat a strong answer covers: ${question.rubric.join("; ")}` : ""}
+
+Speech recognized from the OTHER person near the candidate (automatic transcription, may contain errors and fragments of the candidate's own words):
+"""
+${input.transcript}
+"""
+
+Decide:
+- related_to_interview: is this speech about the question, the topic, or the interview?
+- helping_candidate: does it give answers, hints, code, facts, structure, or tell the candidate what to say or type?
+- confidence: "high" only when the speech clearly supplies interview-relevant content or instructions to the candidate. Unrelated conversation (chores, food, TV, phone calls), greetings, "good luck", or asking the candidate to be quiet is NOT help. Ambiguous fragments are "low" or "medium".
+- evidence_quote: the exact helping words, or an empty string.`,
   });
 }
 
