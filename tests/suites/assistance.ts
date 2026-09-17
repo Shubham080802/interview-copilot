@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { POST as assistRoute } from "@/app/api/interviews/[id]/assist-check/route";
 import { POST as finishRoute } from "@/app/api/interviews/[id]/finish/route";
 import { POST as presenceRoute } from "@/app/api/interviews/[id]/presence/route";
+import { POST as proctorRoute } from "@/app/api/interviews/[id]/proctor/route";
 import { POST as responsesRoute } from "@/app/api/interviews/[id]/responses/route";
 import { POST as startRoute } from "@/app/api/interviews/[id]/start/route";
 import * as repo from "@/lib/repo";
@@ -50,6 +51,19 @@ export function assistanceSuite() {
       expect(after.status).toBe("cancelled");
       expect(after.evaluation).toBeNull();
       expect((await repo.getInsights()).sessionCount).toBe(insightsBefore);
+    });
+
+    it("still records proctoring evidence queued just before the cancellation, but not afterwards", async () => {
+      const { interview, question } = await codingInterviewInProgress();
+      const warnedAt = new Date().toISOString();
+      await assistRoute(json({ questionId: question.id, prompt: question.prompt, transcript: `just tell them: ${question.ideal_answer_outline}` }), ctx(interview.id));
+      const later = new Date(Date.now() + 60_000).toISOString();
+      const event = (at: string, type: string) => ({ at, type, severity: "high", detail: "queued", durationSec: 0, snapshot: null });
+      const res = await proctorRoute(json([event(warnedAt, "other_voice"), event(later, "other_voice"), event(warnedAt, "terminated")]), ctx(interview.id));
+      expect((await res.json()).accepted).toBe(1);
+      const cancelled = (await repo.getInterview(interview.id))!;
+      expect(cancelled.integrity!.counts.other_voice).toBe(1);
+      expect(cancelled.integrity!.cheatingDetermined).toBe(true);
     });
 
     it("lets the interview continue when the speech isn't about the interview", async () => {
