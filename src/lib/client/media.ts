@@ -122,16 +122,38 @@ function getRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
   return (w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null) as (new () => SpeechRecognitionLike) | null;
 }
 
-export function useSpeechRecognition(onFinal: (text: string) => void) {
+/** Dev-only: `window.__fakeSpeech(text)` delivers text as if speech recognition had heard it. */
+const fakeSpeechListeners = new Set<(text: string, at: number) => void>();
+if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
+  (window as unknown as { __fakeSpeech: (text: string) => void }).__fakeSpeech = (text: string) => {
+    for (const listener of fakeSpeechListeners) listener(text, Date.now());
+  };
+}
+
+/**
+ * Browser speech recognition.
+ * - `start()`/`stop()` control *capture*: while capturing, recognized text is delivered to `onFinal`
+ *   (e.g. the answer box) and interim text is shown.
+ * - With `keepAlive`, recognition keeps running while not capturing, and every final result is passed
+ *   to `onTranscript` with its time — used to understand speech from other voices near the candidate.
+ */
+export function useSpeechRecognition(
+  onFinal: (text: string) => void,
+  opts: { keepAlive?: boolean; onTranscript?: (text: string, at: number) => void } = {},
+) {
   const [supported, setSupported] = useState(false);
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState("");
   const [error, setError] = useState("");
   const recRef = useRef<SpeechRecognitionLike | null>(null);
-  const wantRef = useRef(false);
+  const captureRef = useRef(false);
+  const keepAliveRef = useRef(Boolean(opts.keepAlive));
+  keepAliveRef.current = Boolean(opts.keepAlive);
   const onFinalRef = useRef(onFinal);
   onFinalRef.current = onFinal;
-  // Accumulated seconds the mic was on (for speaking-pace metrics).
+  const onTranscriptRef = useRef(opts.onTranscript);
+  onTranscriptRef.current = opts.onTranscript;
+  // Accumulated seconds the mic was captured (for speaking-pace metrics).
   const speakingMs = useRef(0);
   const startedAt = useRef<number | null>(null);
 
@@ -139,10 +161,11 @@ export function useSpeechRecognition(onFinal: (text: string) => void) {
     setSupported(getRecognitionCtor() !== null);
   }, []);
 
-  const start = useCallback(() => {
+  const shouldRun = () => captureRef.current || keepAliveRef.current;
+
+  const ensureRunning = useCallback(() => {
     const Ctor = getRecognitionCtor();
-    if (!Ctor || wantRef.current) return;
-    setError("");
+    if (!Ctor || recRef.current) return;
     const rec = new Ctor();
     rec.continuous = true;
     rec.interimResults = true;
@@ -151,23 +174,28 @@ export function useSpeechRecognition(onFinal: (text: string) => void) {
       let interimText = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i];
-        if (r.isFinal) onFinalRef.current(r[0].transcript.trim());
-        else interimText += r[0].transcript;
+        if (r.isFinal) {
+          const text = r[0].transcript.trim();
+          if (!text) continue;
+          onTranscriptRef.current?.(text, Date.now());
+          if (captureRef.current) onFinalRef.current(text);
+        } else interimText += r[0].transcript;
       }
-      setInterim(interimText);
+      setInterim(captureRef.current ? interimText : "");
     };
     rec.onerror = (e) => {
       if (e.error === "not-allowed") {
-        wantRef.current = false;
+        captureRef.current = false;
+        keepAliveRef.current = false;
         setError("Microphone access for speech recognition was blocked.");
       } else if (e.error === "network") {
         setError("Speech recognition needs an internet connection. You can type your answer instead.");
       }
     };
-    // Chrome stops recognition after silences; restart while the user still wants it.
+    // Chrome stops recognition after silences; restart while it's still wanted.
     rec.onend = () => {
       setInterim("");
-      if (wantRef.current) {
+      if (shouldRun()) {
         try {
           rec.start();
           return;
@@ -175,27 +203,52 @@ export function useSpeechRecognition(onFinal: (text: string) => void) {
           /* fall through */
         }
       }
-      setListening(false);
+      recRef.current = null;
+      if (!captureRef.current) setListening(false);
     };
     recRef.current = rec;
-    wantRef.current = true;
-    startedAt.current = Date.now();
     try {
       rec.start();
-      setListening(true);
     } catch {
-      wantRef.current = false;
+      recRef.current = null;
     }
   }, []);
 
+  const start = useCallback(() => {
+    if (!getRecognitionCtor() || captureRef.current) return;
+    setError("");
+    captureRef.current = true;
+    startedAt.current = Date.now();
+    setListening(true);
+    ensureRunning();
+  }, [ensureRunning]);
+
   const stop = useCallback(() => {
-    wantRef.current = false;
-    if (startedAt.current) speakingMs.current += Date.now() - startedAt.current;
+    if (captureRef.current && startedAt.current) speakingMs.current += Date.now() - startedAt.current;
+    captureRef.current = false;
     startedAt.current = null;
-    recRef.current?.stop();
     setListening(false);
     setInterim("");
+    if (!keepAliveRef.current) recRef.current?.stop();
   }, []);
+
+  // Keep-alive can be switched on and off (e.g. only while an interview is in session).
+  useEffect(() => {
+    if (opts.keepAlive) ensureRunning();
+    else if (!captureRef.current) recRef.current?.stop();
+  }, [opts.keepAlive, ensureRunning]);
+
+  useEffect(() => {
+    if (!opts.onTranscript) return;
+    const listener = (text: string, at: number) => {
+      onTranscriptRef.current?.(text, at);
+      if (captureRef.current) onFinalRef.current(text);
+    };
+    fakeSpeechListeners.add(listener);
+    return () => {
+      fakeSpeechListeners.delete(listener);
+    };
+  }, [opts.onTranscript]);
 
   const takeSpeakingSeconds = useCallback(() => {
     let ms = speakingMs.current;
@@ -208,7 +261,8 @@ export function useSpeechRecognition(onFinal: (text: string) => void) {
   }, []);
 
   useEffect(() => () => {
-    wantRef.current = false;
+    captureRef.current = false;
+    keepAliveRef.current = false;
     recRef.current?.stop();
   }, []);
 
