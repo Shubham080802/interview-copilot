@@ -21,3 +21,17 @@ export function splitIntoSpeechChunks(text: string, maxChars = 220): string[] {
   }
   return chunks;
 }
+
+/**
+ * Removes the silence a speech model adds before and after each sentence, keeping a short natural
+ * margin, so the pauses between sentences can be controlled and sound human.
+ */
+export function trimSilence(samples: Float32Array, sampleRate: number, threshold = 0.008, marginMs = 60): Float32Array {
+  let start = 0;
+  while (start < samples.length && Math.abs(samples[start]) < threshold) start++;
+  if (start === samples.length) return samples.subarray(0, 0);
+  let end = samples.length - 1;
+  while (end > start && Math.abs(samples[end]) < threshold) end--;
+  const margin = Math.round((marginMs / 1000) * sampleRate);
+  return samples.subarray(Math.max(0, start - margin), Math.min(samples.length, end + 1 + margin));
+}

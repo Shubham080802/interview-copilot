@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitIntoSpeechChunks } from "@/lib/voice-text";
+import { splitIntoSpeechChunks, trimSilence } from "@/lib/voice-text";
 
 describe("splitIntoSpeechChunks", () => {
   it("splits interviewer speech into sentences so playback can start early", () => {
@@ -20,5 +20,20 @@ describe("splitIntoSpeechChunks", () => {
     const chunks = splitIntoSpeechChunks(long, 120);
     expect(chunks.every((c) => c.length <= 120)).toBe(true);
     expect(chunks.join(" ").replace(/\s+/g, " ")).toBe(long.replace(/\s+/g, " ").trim());
+  });
+});
+
+describe("trimSilence", () => {
+  it("removes leading and trailing silence but keeps a short margin", () => {
+    const rate = 1000;
+    const samples = new Float32Array(1000);
+    samples.fill(0.5, 400, 600); // speech from 0.4 s to 0.6 s
+    const trimmed = trimSilence(samples, rate, 0.01, 50);
+    expect(trimmed.length).toBe(200 + 2 * 50);
+    expect(trimmed[50]).toBe(0.5);
+  });
+
+  it("returns nothing for pure silence", () => {
+    expect(trimSilence(new Float32Array(100), 1000)).toHaveLength(0);
   });
 });
