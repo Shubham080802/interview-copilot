@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { averageEmbedding, computeFbank, cosineSimilarity, NUM_MEL_BINS, resampleTo16k, SAMPLE_RATE } from "../voice-id/fbank";
 import { OtherVoicePolicy, type VoiceDecision } from "../voice-id/policy";
-import { withOrtInitLock } from "./ort-init-lock";
 
 /*
  * Voice monitoring: only the candidate may speak during the interview.
@@ -44,19 +43,17 @@ class VoiceEngine {
   private static instance: Promise<VoiceEngine> | null = null;
 
   static load(): Promise<VoiceEngine> {
-    VoiceEngine.instance ??= withOrtInitLock(async () => {
-      // The WASM-only build: same runtime files (and module instance) as the interviewer voice.
+    VoiceEngine.instance ??= (async () => {
+      // The WASM-only build, served from /voice/ort (the interviewer voice's worker uses the same files).
       const ort = await import("onnxruntime-web/wasm");
-      ort.env.wasm.wasmPaths = "/voice/ort/"; // same runtime files the interviewer voice uses
-      // The runtime is shared with the interviewer voice and initialized once by whichever feature loads
-      // first, so both must use the same settings. The runtime itself falls back to a single thread
-      // when multi-threading isn't available.
+      ort.env.wasm.wasmPaths = "/voice/ort/";
+      // The runtime falls back to a single thread when multi-threading isn't available.
       ort.env.wasm.numThreads = navigator.hardwareConcurrency;
       const options = { executionProviders: ["wasm"] };
       const vad = await ort.InferenceSession.create("/voice/monitor/vad.onnx", options);
       const speaker = await ort.InferenceSession.create("/voice/monitor/speaker.onnx", options);
       return new VoiceEngine(ort, vad, speaker);
-    }).catch((err) => {
+    })().catch((err) => {
       VoiceEngine.instance = null;
       throw err;
     });
