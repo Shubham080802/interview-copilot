@@ -1,10 +1,11 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { Link2, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { Link2, Play, Sparkles } from "lucide-react";
+import { useRef, useState } from "react";
 import { Button, Card, cx, Field, inputClass, Spinner } from "@/components/ui";
 import { api } from "@/lib/client/api";
-import { ROUND_LABELS, ROUND_TYPES, type InterviewConfig, type JobPosting, type RoundType } from "@/lib/schemas";
+import { INTERVIEWER_VOICES } from "@/lib/client/interviewer-voice";
+import { INTERVIEWER_VOICE_IDS, ROUND_LABELS, ROUND_TYPES, type InterviewConfig, type JobPosting, type RoundType } from "@/lib/schemas";
 import type { Interview } from "@/lib/types";
 
 const FIELDS = ["Software Engineering", "Frontend Engineering", "Backend Engineering", "Data Science / ML", "Data Engineering", "DevOps / SRE / Cloud", "Mobile Development", "Cybersecurity", "Product Management", "UX / Product Design", "Business / Data Analyst", "QA / Test Engineering", "Consulting", "Finance", "Marketing", "Sales"];
@@ -30,6 +31,7 @@ const DEFAULTS: InterviewConfig = {
   questionsPerRound: 3,
   difficulty: "adaptive",
   persona: "neutral",
+  interviewerVoice: "af_heart",
   researchCompany: true,
   proctoring: true,
   recordVideo: true,
@@ -45,6 +47,7 @@ export function NewInterviewForm({ aiEnabled, zoomConfigured }: { aiEnabled: boo
   const [busy, setBusy] = useState(false);
   const set = <K extends keyof InterviewConfig>(k: K, v: InterviewConfig[K]) => setC((prev) => ({ ...prev, [k]: v }));
   const [jobUrl, setJobUrl] = useState("");
+  const previewRef = useRef<HTMLAudioElement | null>(null);
   const [importing, setImporting] = useState<"url" | "text" | null>(null);
   const [importNote, setImportNote] = useState<{ tone: "ok" | "warn" | "error"; text: string } | null>(null);
 
@@ -137,6 +140,29 @@ export function NewInterviewForm({ aiEnabled, zoomConfigured }: { aiEnabled: boo
             </select>
           </Field>
         </div>
+        <Field label="Interviewer voice" hint="A natural-sounding voice generated on your device. Press play to hear each one.">
+          <div className="grid gap-2 sm:grid-cols-2">
+            {INTERVIEWER_VOICE_IDS.map((voice) => (
+              <label key={voice} className={cx("flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition", c.interviewerVoice === voice ? "border-brand-500 bg-brand-50 ring-1 ring-brand-500" : "border-slate-200 hover:border-slate-300")}>
+                <input type="radio" name="interviewerVoice" className="accent-brand-600" checked={c.interviewerVoice === voice} onChange={() => set("interviewerVoice", voice)} />
+                <span className="flex-1 text-sm">{INTERVIEWER_VOICES[voice]}</span>
+                <button
+                  type="button"
+                  aria-label={`Play a sample of ${INTERVIEWER_VOICES[voice]}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    previewRef.current?.pause();
+                    previewRef.current = new Audio(`/voice-samples/interviewer-${voice}.m4a`);
+                    void previewRef.current.play();
+                  }}
+                  className="rounded-full bg-white p-1.5 text-brand-700 shadow-sm ring-1 ring-slate-200 hover:bg-brand-50"
+                >
+                  <Play className="h-3.5 w-3.5" />
+                </button>
+              </label>
+            ))}
+          </div>
+        </Field>
       </Card>
 
       <Card className="space-y-5">
