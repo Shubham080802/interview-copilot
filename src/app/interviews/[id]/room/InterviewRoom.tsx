@@ -36,6 +36,9 @@ import { ROUND_LABELS, type FollowUp, type PlanQuestion, type RoundType } from "
 import type { Clarification, InterviewResponse } from "@/lib/types";
 import type { VoiceStatus } from "@/lib/client/interviewer-voice";
 
+const WELCOME_BACK = "Welcome back. Let's continue where we left off.";
+const roundTransition = (round: RoundType) => `Great. Let's move on to the ${ROUND_LABELS[round]} round.`;
+
 type Phase = "setup" | "intro" | "question" | "submitting" | "reacting" | "closing";
 
 interface Turn {
@@ -61,7 +64,7 @@ export function InterviewRoom({ id }: { id: string }) {
   const { data, error: loadError } = useInterview(id);
   const media = useMediaStream();
   // Interviewer voice + audio mixer: the recording holds only the spoken conversation, no video.
-  const speaker = useInterviewerVoice();
+  const speaker = useInterviewerVoice(data ? (data.interview.config.interviewerVoice ?? "af_heart") : null);
   const recorder = useRecorder(id);
 
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
@@ -94,6 +97,16 @@ export function InterviewRoom({ id }: { id: string }) {
     () => plan?.rounds.flatMap((r) => r.questions.map((q) => ({ question: q, roundType: r.type }))) ?? [],
     [plan],
   );
+
+  // Prepare the opening lines while the candidate is on the setup screen, so the interviewer starts instantly.
+  const prepareSpeech = speaker.prepare;
+  const responses = data?.responses;
+  useEffect(() => {
+    if (phase !== "setup" || speaker.status !== "ready" || !plan || !responses) return;
+    const answered = new Set(responses.filter((r) => !r.isFollowUp).map((r) => r.questionId));
+    const first = items.find((it) => !answered.has(it.question.id));
+    prepareSpeech([answered.size ? WELCOME_BACK : plan.intro_script, ...(first ? [first.question.prompt] : [])]);
+  }, [phase, speaker.status, plan, items, responses, prepareSpeech]);
 
   // Everything recognized during the session is kept briefly (with timestamps) so that speech heard while
   // another voice was detected can be checked for help with the interview.
@@ -337,12 +350,19 @@ export function InterviewRoom({ id }: { id: string }) {
       setStartedAt(Date.now());
       setPhase("question");
       if (previous && previous.roundType !== item.roundType) {
-        await say(`Great. Let's move on to the ${ROUND_LABELS[item.roundType]} round.`);
+        await say(roundTransition(item.roundType));
       }
+      // While this question is being answered, prepare what the interviewer says next.
+      const following = items[index + 1];
+      speaker.prepare(
+        following
+          ? [...(following.roundType !== item.roundType ? [roundTransition(following.roundType)] : []), following.question.prompt]
+          : plan ? [plan.closing_script] : [],
+      );
       await say(item.question.prompt);
       if (autoListen && sr.supported && !pausedRef.current && turnRef.current?.index === index) sr.start();
     },
-    [autoListen, finish, items, say, sr],
+    [autoListen, finish, items, plan, say, speaker, sr],
   );
 
   async function begin() {
@@ -371,7 +391,7 @@ export function InterviewRoom({ id }: { id: string }) {
     setAnsweredCount(answered.size);
     const startIndex = items.findIndex((it) => !answered.has(it.question.id));
     setPhase("intro");
-    await say(answered.size ? `Welcome back. Let's continue where we left off.` : plan.intro_script);
+    await say(answered.size ? WELCOME_BACK : plan.intro_script);
     await goTo(startIndex === -1 ? items.length : startIndex);
   }
 
@@ -407,6 +427,7 @@ export function InterviewRoom({ id }: { id: string }) {
       setPhase("reacting");
 
       if (followUp.ask_follow_up && followUp.follow_up_question && !skipped) {
+        speaker.prepare([followUp.follow_up_question]); // synthesized while the acknowledgement plays
         await say(followUp.acknowledgement);
         const next: Turn = { ...current, prompt: followUp.follow_up_question, isFollowUp: true, parentResponseId: response.id };
         setTurn(next);

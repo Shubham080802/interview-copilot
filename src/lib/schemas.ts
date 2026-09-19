@@ -17,6 +17,8 @@ export const ROUND_LABELS: Record<RoundType, string> = {
   hr: "HR / Culture Fit",
 };
 
+export const INTERVIEWER_VOICE_IDS = ["af_heart", "am_michael", "af_bella", "bf_emma"] as const;
+
 export const InterviewConfigSchema = z.object({
   field: z.string().trim().min(1, "Pick a field"),
   role: z.string().trim().min(1, "Role is required"),
@@ -30,6 +32,7 @@ export const InterviewConfigSchema = z.object({
   questionsPerRound: z.number().int().min(1).max(8).default(3),
   difficulty: z.enum(["easy", "medium", "hard", "adaptive"]).default("adaptive"),
   persona: z.enum(["friendly", "neutral", "tough"]).default("neutral"),
+  interviewerVoice: z.enum(INTERVIEWER_VOICE_IDS).default("af_heart"),
   researchCompany: z.boolean().default(true),
   proctoring: z.boolean().default(true),
   recordVideo: z.boolean().default(true),
