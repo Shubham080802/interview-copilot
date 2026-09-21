@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { blobFileStore } from "@/lib/storage/files";
+import { blobFileStore, localFileStore } from "@/lib/storage/files";
 import { ensureSchema, openSqlite, recoverInterruptedTasks, toPostgresPlaceholders, type SqlDb } from "@/lib/storage/sql";
 import { fakeBlobClient, pgliteDb } from "./fakes";
 
@@ -88,5 +88,37 @@ describe("Blob file store", () => {
     expect(await new Response(rec.stream(1, 3)).text()).toBe("123");
     await store.deleteRecordings("blobInterview");
     expect(client.store.size).toBe(0);
+  });
+
+  it("deletes one part of a recording and keeps the others", async () => {
+    const client = fakeBlobClient();
+    const store = blobFileStore(client);
+    await store.appendRecordingChunk("blobInterview", 1, 0, new TextEncoder().encode("first"));
+    await store.appendRecordingChunk("blobInterview", 2, 0, new TextEncoder().encode("second"));
+
+    await store.deleteRecording("blobInterview", 1);
+    expect(await store.listRecordingSegments("blobInterview")).toEqual([2]);
+    expect(await store.openRecording("blobInterview", 1)).toBeNull();
+    expect((await store.openRecording("blobInterview", 2))!.size).toBe(6);
+  });
+});
+
+describe("Local file store", () => {
+  it("deletes one part of a recording and keeps the others", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ic-files-"));
+    const store = localFileStore(dir);
+    await store.appendRecordingChunk("localInterview", 1, 0, new TextEncoder().encode("first"));
+    await store.appendRecordingChunk("localInterview", 2, 0, new TextEncoder().encode("second"));
+    expect(await store.listRecordingSegments("localInterview")).toEqual([1, 2]);
+
+    await store.deleteRecording("localInterview", 1);
+    expect(await store.listRecordingSegments("localInterview")).toEqual([2]);
+    expect(await store.openRecording("localInterview", 1)).toBeNull();
+    expect((await store.openRecording("localInterview", 2))!.size).toBe(6);
+
+    await store.deleteRecording("localInterview", 2); // deleting what is already gone is harmless
+    await store.deleteRecording("localInterview", 2);
+    expect(await store.listRecordingSegments("localInterview")).toEqual([]);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

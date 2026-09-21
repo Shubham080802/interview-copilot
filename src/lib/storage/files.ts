@@ -19,6 +19,8 @@ export interface FileStore {
   appendRecordingChunk(interviewId: string, segment: number, seq: number, data: Uint8Array): Promise<void>;
   listRecordingSegments(interviewId: string): Promise<number[]>;
   openRecording(interviewId: string, segment: number): Promise<RecordingReader | null>;
+  /** Removes one part of a recording; the rest of the interview is untouched. */
+  deleteRecording(interviewId: string, segment: number): Promise<void>;
   deleteRecordings(interviewId: string): Promise<void>;
 }
 
@@ -70,6 +72,9 @@ export function localFileStore(dataDir: string): FileStore {
         size: fs.statSync(file).size,
         stream: (start, end) => Readable.toWeb(fs.createReadStream(file, { start, end })) as ReadableStream<Uint8Array>,
       };
+    },
+    async deleteRecording(id, segment) {
+      fs.rmSync(recordingPath(id, segment), { force: true });
     },
     async deleteRecordings(id) {
       for (const segment of segmentsOf(id)) fs.rmSync(recordingPath(id, segment), { force: true });
@@ -177,6 +182,10 @@ export function blobFileStore(client: BlobClient): FileStore {
           });
         },
       };
+    },
+    async deleteRecording(id, segment) {
+      const chunks = await chunksOf(id, segment);
+      for (let i = 0; i < chunks.length; i += 500) await client.del(chunks.slice(i, i + 500).map((b) => b.pathname));
     },
     async deleteRecordings(id) {
       const all = await listAll(`recordings/${id}/`);

@@ -214,6 +214,12 @@ export async function openRecording(interviewId: string, segment: number) {
   return (await files()).openRecording(interviewId, segment);
 }
 
+/** Deletes one part of the conversation audio, leaving the rest of the interview intact. */
+export async function deleteRecording(interviewId: string, segment: number): Promise<void> {
+  if (!isValidId(interviewId)) return;
+  await (await files()).deleteRecording(interviewId, segment);
+}
+
 /* --------------------------- camera presence --------------------------- */
 
 /** How recently the browser must have confirmed a live camera for answers to be accepted. */

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { fail, loadInterview, type IdParams } from "@/lib/api";
-import { appendRecordingChunk, openRecording } from "@/lib/repo";
+import { appendRecordingChunk, deleteRecording, openRecording } from "@/lib/repo";
 
 // Hosted platforms cap request bodies (~4.5 MB on Vercel); recorder chunks are far smaller.
 const MAX_CHUNK = 4 * 1024 * 1024;
@@ -52,4 +52,15 @@ export async function GET(req: Request, ctx: IdParams) {
     });
   }
   return new Response(recording.stream(0, size - 1), { headers: { ...headers, "Content-Length": String(size) } });
+}
+
+/** Deletes one part of the conversation audio (`?segment=n`). The interview itself is kept. */
+export async function DELETE(req: Request, ctx: IdParams) {
+  const interview = await loadInterview(ctx);
+  if (!interview) return fail("Interview not found", 404);
+  if (interview.status === "in_progress") return fail("The interview is still running", 409);
+  const segment = parseSegment(new URL(req.url).searchParams.get("segment"));
+  if (!segment) return fail("Invalid recording part");
+  await deleteRecording(interview.id, segment);
+  return NextResponse.json({ ok: true });
 }
