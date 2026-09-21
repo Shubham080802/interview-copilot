@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Badge, Card, EmptyState, LinkButton } from "@/components/ui";
+import { Badge, Card, LinkButton } from "@/components/ui";
+import { aiEnabled } from "@/lib/ai/client";
 import { getInsights, getProfile, listInterviews } from "@/lib/repo";
 import { ROUND_LABELS } from "@/lib/schemas";
 
@@ -10,6 +11,7 @@ export const dynamic = "force-dynamic";
 const REC: Record<string, string> = { strong_hire: "Strong hire", hire: "Hire", lean_hire: "Lean hire", lean_no_hire: "Lean no hire", no_hire: "No hire" };
 
 export default async function Dashboard() {
+  const ai = aiEnabled();
   const interviews = await listInterviews();
   const insights = await getInsights();
   const profile = await getProfile();
@@ -49,7 +51,7 @@ export default async function Dashboard() {
             {interviews.length > 0 && <a href="/api/export-all" className="text-sm font-medium text-brand-600 hover:underline">Download all data</a>}
           </div>
           {interviews.length === 0 ? (
-            <EmptyState title="No interviews yet">Start your first mock interview — it takes about a minute to prepare.</EmptyState>
+            <HowItWorks aiEnabled={ai} />
           ) : (
             <div className="space-y-3">
               {interviews.map((i) => (
@@ -94,6 +96,36 @@ export default async function Dashboard() {
         </div>
       </div>
     </AppShell>
+  );
+}
+
+/** First run: what actually happens, so nobody has to guess before their first interview. */
+function HowItWorks({ aiEnabled }: { aiEnabled: boolean }) {
+  const steps = [
+    { title: "Tell us the role", detail: "Paste a job posting or type the role and company. Your resume, if you add one, is used too." },
+    { title: "The questions are prepared", detail: aiEnabled ? "The AI reads up on what the company is working on and writes rounds around it — this takes a minute." : "A built-in question bank is used until an Anthropic API key is added." },
+    { title: "Sit the interview", detail: "Your interviewer speaks out loud and you answer by voice or by typing; coding questions open an editor. Camera stays on, and only the conversation audio is recorded." },
+    { title: "Get scored and coached", detail: "Every answer is scored with model answers, you can practise weak ones again, and the next interview is built around what you missed." },
+  ];
+  return (
+    <Card>
+      <h3 className="font-semibold">How it works</h3>
+      <ol className="mt-4 space-y-4">
+        {steps.map((s, n) => (
+          <li key={s.title} className="flex gap-3">
+            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-brand-100 text-xs font-semibold text-brand-700">{n + 1}</span>
+            <div>
+              <div className="text-sm font-medium">{s.title}</div>
+              <p className="text-sm text-slate-600">{s.detail}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        <LinkButton href="/interviews/new">Start your first interview</LinkButton>
+        <span className="text-xs text-slate-500">Takes about a minute to prepare · everything stays on your own deployment</span>
+      </div>
+    </Card>
   );
 }
 
