@@ -369,6 +369,12 @@ export function InterviewRoom({ id }: { id: string }) {
     [autoListen, finish, items, plan, say, speaker, sr],
   );
 
+  // Sound check: hear the interviewer (and unlock audio) before the interview starts.
+  async function testVoice() {
+    await speaker.mixer?.resume().catch(() => {}); // the click is the gesture browsers require
+    await speaker.speak(`Hi, I'm ${plan?.interviewer_name ?? "Alex"}. I'll be your interviewer today. If you can hear me clearly, you're ready to start.`);
+  }
+
   async function begin() {
     if (!interview || !plan || !media.stream) return;
     if (!camera.cameraOn) return setActionError("Turn your camera on to start — the interview runs with the camera on throughout.");
@@ -674,6 +680,8 @@ export function InterviewRoom({ id }: { id: string }) {
               onEnroll={monitor.startEnrollment}
               onCancelEnroll={monitor.cancelEnrollment}
               voiceStatus={speaker.status}
+              voiceSpeaking={speaker.speaking}
+              onTestVoice={testVoice}
               voiceProgress={speaker.progress}
               voiceError={speaker.error}
               onRetryVoice={speaker.retry}
@@ -828,6 +836,8 @@ function SetupPanel(props: {
   proctoring: boolean;
   recording: boolean;
   voiceStatus: VoiceStatus;
+  voiceSpeaking: boolean;
+  onTestVoice: () => void;
   voiceProgress: number;
   voiceError: string;
   onRetryVoice: () => void;
@@ -897,6 +907,17 @@ function SetupPanel(props: {
           </li>
         ))}
       </ul>
+
+      {props.voiceStatus !== "loading" && (
+        <button
+          onClick={props.onTestVoice}
+          disabled={props.voiceSpeaking}
+          className="mt-4 inline-flex w-fit items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/20 disabled:opacity-50"
+        >
+          <Volume2 className={cx("h-4 w-4", props.voiceSpeaking && "animate-pulse text-brand-300")} />
+          {props.voiceSpeaking ? "Speaking…" : "Hear your interviewer"}
+        </button>
+      )}
 
       {(props.monitorStatus === "needs_enrollment" || props.monitorStatus === "enrolling") && (
         <div className="mt-5 rounded-xl bg-black/30 p-4 ring-1 ring-brand-500/40">
