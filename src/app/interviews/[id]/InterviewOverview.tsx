@@ -7,6 +7,7 @@ import { api, formatDate } from "@/lib/client/api";
 import { useInterview } from "@/lib/client/useInterview";
 import { ROUND_LABELS } from "@/lib/schemas";
 import { plural } from "@/lib/format";
+import { useVoicePrefetch } from "@/lib/client/use-voice-prefetch";
 import { isWebLink } from "@/lib/types";
 
 const PREP_STEPS = ["Loading your interview history", "Creating Zoom meeting", "Researching", "Designing", "Ready"];
@@ -15,6 +16,7 @@ export function InterviewOverview({ id }: { id: string }) {
   const router = useRouter();
   const { data, error, reload } = useInterview(id, (d) => !d || d.interview.status === "preparing" || d.interview.status === "evaluating");
   const [busy, setBusy] = useState(false);
+  const voiceReady = useVoicePrefetch(data?.interview.config.interviewerVoice ?? null);
 
   const status = data?.interview.status;
   useEffect(() => {
@@ -109,6 +111,8 @@ export function InterviewOverview({ id }: { id: string }) {
                 {plural(i.plan.rounds.length, "round")} · {plural(totalQuestions, "question")} · interviewer: {i.plan.interviewer_name}
                 {i.status === "in_progress" && ` · ${responses.length} answered so far`}
               </p>
+              {voiceReady === "downloading" && <p className="mt-1 text-xs text-slate-500">Getting {i.plan.interviewer_name}&apos;s voice ready…</p>}
+              {voiceReady === "ready" && <p className="mt-1 text-xs text-emerald-700">{i.plan.interviewer_name}&apos;s voice is ready</p>}
             </div>
             <div className="flex gap-2">
               {i.status === "in_progress" && responses.length > 0 && (

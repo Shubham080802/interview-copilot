@@ -1,9 +1,10 @@
 "use client";
 import type { KokoroRequest, KokoroResponse } from "./kokoro.worker";
 
-export const KOKORO_SAMPLE_RATE = 24_000;
+import { DEFAULT_MODEL_FILE, type DownloadProgress } from "./model-cache";
 
-export type DownloadProgress = (loaded: number, total: number) => void;
+export const KOKORO_SAMPLE_RATE = 24_000;
+export type { DownloadProgress };
 
 /** The Kokoro natural voice, synthesized in a background worker (see kokoro.worker.ts). */
 export class KokoroEngine {
@@ -27,7 +28,7 @@ export class KokoroEngine {
   /**
    * @param modelFile the 8-bit model (92 MB) runs well on the CPU/WebAssembly path used here.
    */
-  static load(voiceId: string, onProgress?: DownloadProgress, modelFile = "model_quantized.onnx"): Promise<KokoroEngine> {
+  static load(voiceId: string, onProgress?: DownloadProgress, modelFile = DEFAULT_MODEL_FILE): Promise<KokoroEngine> {
     const worker = new Worker(new URL("./kokoro.worker.ts", import.meta.url), { type: "module" });
     return new Promise((resolve, reject) => {
       const fail = (err: Error) => {

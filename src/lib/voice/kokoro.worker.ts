@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 import { styleForLength, textToPhonemes, tokenize } from "./kokoro-text";
+import { cachedDownload, modelUrl, voiceUrl } from "./model-cache";
 
 /*
  * Kokoro-82M (Apache-2.0, hexgrad/Kokoro-82M; ONNX export by onnx-community) — a natural-sounding
@@ -16,44 +17,8 @@ export type KokoroResponse =
   | { type: "audio"; id: number; samples: Float32Array }
   | { type: "synthesize-error"; id: number; message: string };
 
-const REPO = "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main";
-const CACHE = "interview-voice-v1";
-
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 const send = (message: KokoroResponse, transfer: Transferable[] = []) => scope.postMessage(message, transfer);
-
-/** Fetches a file once and serves it from Cache Storage afterwards, reporting download progress. */
-async function cachedDownload(url: string, onProgress?: (loaded: number, total: number) => void): Promise<ArrayBuffer> {
-  let cache: Cache | null = null;
-  try {
-    cache = await caches.open(CACHE);
-    const hit = await cache.match(url);
-    if (hit) return await hit.arrayBuffer();
-  } catch {
-    cache = null; // private mode or storage disabled: just download
-  }
-  const res = await fetch(url);
-  if (!res.ok || !res.body) throw new Error(`Download failed (${res.status}) for ${url}`);
-  const total = Number(res.headers.get("content-length")) || 0;
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let loaded = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    loaded += value.length;
-    onProgress?.(loaded, total);
-  }
-  const data = new Uint8Array(loaded);
-  let offset = 0;
-  for (const c of chunks) {
-    data.set(c, offset);
-    offset += c.length;
-  }
-  if (cache) await cache.put(url, new Response(data, { headers: { "content-type": "application/octet-stream" } })).catch(() => {});
-  return data.buffer;
-}
 
 type Ort = typeof import("onnxruntime-web/wasm");
 
@@ -63,8 +28,8 @@ let queue: Promise<unknown> = Promise.resolve();
 
 async function load(voiceId: string, modelFile: string) {
   const [modelData, voiceData] = await Promise.all([
-    cachedDownload(`${REPO}/onnx/${modelFile}`, (loaded, total) => send({ type: "progress", loaded, total })),
-    cachedDownload(`${REPO}/voices/${voiceId}.bin`),
+    cachedDownload(modelUrl(modelFile), (loaded, total) => send({ type: "progress", loaded, total })),
+    cachedDownload(voiceUrl(voiceId)),
   ]);
   const ort = await import("onnxruntime-web/wasm");
   ort.env.wasm.wasmPaths = "/voice/ort/";
