@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { averageEmbedding, computeFbank, cosineSimilarity, NUM_MEL_BINS, resampleTo16k, SAMPLE_RATE } from "../voice-id/fbank";
 import { OtherVoicePolicy, type VoiceDecision } from "../voice-id/policy";
+import { SpeechBuffer } from "../voice-id/speech-buffer";
 
 /*
  * Voice monitoring: only the candidate may speak during the interview.
@@ -137,7 +138,7 @@ export function useVoiceMonitor(opts: {
   const profileRef = useRef<{ embedding: Float32Array; levelDb: number } | null>(null);
   const policyRef = useRef<OtherVoicePolicy | null>(null);
   const enrollRef = useRef<{ embeddings: Float32Array[]; levels: number[]; voicedSamples: number }>({ embeddings: [], levels: [], voicedSamples: 0 });
-  const speechRef = useRef<{ samples: Float32Array[]; length: number; levels: number[]; silentChunks: number }>({ samples: [], length: 0, levels: [], silentChunks: 0 });
+  const speechRef = useRef(new SpeechBuffer({ windowSamples: WINDOW, hopSamples: HOP, sampleRate: SAMPLE_RATE }));
   const embeddingBusy = useRef(false);
   const suppressedUntil = useRef(0);
   const statusRef = useRef<MonitorStatus>("loading");
@@ -171,7 +172,7 @@ export function useVoiceMonitor(opts: {
   }, []);
 
   const resetSpeech = () => {
-    speechRef.current = { samples: [], length: 0, levels: [], silentChunks: 0 };
+    speechRef.current.reset();
     engineRef.current?.resetSpeechDetector();
   };
 
@@ -237,36 +238,10 @@ export function useVoiceMonitor(opts: {
       if (chunk.length !== CHUNK) return;
 
       const probability = await engine.speechProbability(chunk);
-      const speech = speechRef.current;
-      if (probability < SPEECH_PROBABILITY) {
-        speech.silentChunks++;
-        // A long pause ends the current utterance; very short fragments are discarded.
-        if (speech.silentChunks > 20 && speech.length < SAMPLE_RATE / 2) speechRef.current = { samples: [], length: 0, levels: [], silentChunks: speech.silentChunks };
-        return;
-      }
-      speech.silentChunks = 0;
-      speech.samples.push(chunk);
-      speech.length += chunk.length;
-      speech.levels.push(levelDb(chunk));
-      if (modeRef.current === "enrolling") enrollRef.current.voicedSamples += chunk.length;
-
-      if (speech.length >= WINDOW) {
-        const window = new Float32Array(WINDOW);
-        let offset = 0;
-        for (const part of speech.samples) {
-          const take = Math.min(part.length, WINDOW - offset);
-          window.set(part.subarray(0, take), offset);
-          offset += take;
-          if (offset === WINDOW) break;
-        }
-        const windowLevel = median(speech.levels);
-        // Keep the second half for the next (overlapping) window.
-        const keepChunks = Math.ceil(HOP / CHUNK);
-        speech.samples = speech.samples.slice(-keepChunks);
-        speech.levels = speech.levels.slice(-keepChunks);
-        speech.length = speech.samples.reduce((s, p) => s + p.length, 0);
-        void handleWindow(window, windowLevel);
-      }
+      const isSpeech = probability >= SPEECH_PROBABILITY;
+      if (isSpeech && modeRef.current === "enrolling") enrollRef.current.voicedSamples += chunk.length;
+      const window = speechRef.current.add(chunk, levelDb(chunk), isSpeech);
+      if (window) void handleWindow(window.samples, window.levelDb);
     },
     [handleWindow],
   );
