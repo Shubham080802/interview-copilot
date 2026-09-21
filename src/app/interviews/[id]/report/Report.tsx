@@ -128,6 +128,7 @@ function Summary({ data }: { data: InterviewData }) {
           </div>
         </Card>
 
+        {scored && (
         <Card>
           <h3 className="font-semibold">Scores by round</h3>
           <div className="mt-4 space-y-4">
@@ -145,7 +146,9 @@ function Summary({ data }: { data: InterviewData }) {
             </div>
           </div>
         </Card>
+        )}
 
+        {o.action_plan.length > 0 && (
         <Card>
           <h3 className="font-semibold">How to improve — your action plan</h3>
           <ol className="mt-4 space-y-4">
@@ -161,12 +164,17 @@ function Summary({ data }: { data: InterviewData }) {
             ))}
           </ol>
         </Card>
+        )}
       </div>
 
       <div className="space-y-6">
-        <ListCard title="Top strengths" items={o.top_strengths} tone="green" />
-        <ListCard title="Key gaps" items={o.key_gaps} tone="red" />
-        <ListCard title="Your next interview will focus on" items={o.next_interview_focus} tone="brand" />
+        {scored && (
+          <>
+            <ListCard title="Top strengths" items={o.top_strengths} tone="green" />
+            <ListCard title="Key gaps" items={o.key_gaps} tone="red" />
+            <ListCard title="Your next interview will focus on" items={o.next_interview_focus} tone="brand" />
+          </>
+        )}
         {i.integrity && (
           <Card>
             <h3 className="font-semibold">Integrity</h3>
