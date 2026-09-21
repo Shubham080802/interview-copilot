@@ -54,6 +54,13 @@ describe("computeIntegrity", () => {
     expect(r.counts.other_voice).toBe(2);
   });
 
+  it("reports determined cheating as high risk even without a termination event", () => {
+    const r = computeIntegrity([event({ type: "assistance", severity: "high", detail: "clear help with the current question" })]);
+    expect(r.cheatingDetermined).toBe(true);
+    expect(r.score).toBe(0);
+    expect(r.level).toBe("high_risk"); // the level must match the score the report shows
+  });
+
   it("penalises a single other-voice warning without terminating", () => {
     const r = computeIntegrity([event({ type: "other_voice", severity: "high" })]);
     expect(r.terminatedReason).toBeNull();

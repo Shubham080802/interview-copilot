@@ -55,9 +55,10 @@ export function computeIntegrity(events: ProctorEvent[]): IntegrityReport {
   // determined cheating scores zero.
   const score = Math.max(0, Math.round(100 - penalty));
   const cappedScore = cheatingDetermined ? 0 : termination ? Math.min(score, 25) : score;
-  const level: IntegrityReport["level"] = termination
-    ? "high_risk"
-    : score >= 90 ? "clean" : score >= 70 ? "minor_flags" : score >= 45 ? "suspicious" : "high_risk";
+  const level: IntegrityReport["level"] =
+    termination || cheatingDetermined
+      ? "high_risk"
+      : cappedScore >= 90 ? "clean" : cappedScore >= 70 ? "minor_flags" : cappedScore >= 45 ? "suspicious" : "high_risk";
 
   const notes: string[] = [];
   const cameraOffSeconds = events.filter((e) => e.type === "camera_off").reduce((s, e) => s + e.durationSec, 0);
