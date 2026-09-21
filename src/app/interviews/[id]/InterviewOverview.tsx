@@ -6,6 +6,7 @@ import { Badge, Button, Card, LinkButton, Markdown, Spinner } from "@/components
 import { api, formatDate } from "@/lib/client/api";
 import { useInterview } from "@/lib/client/useInterview";
 import { ROUND_LABELS } from "@/lib/schemas";
+import { isWebLink } from "@/lib/types";
 
 const PREP_STEPS = ["Loading your interview history", "Creating Zoom meeting", "Researching", "Designing", "Ready"];
 
@@ -121,7 +122,11 @@ export function InterviewOverview({ id }: { id: string }) {
               <h3 className="font-semibold">Zoom meeting</h3>
               <p className="mt-1 text-sm text-slate-500">Share this with anyone joining as a panelist. Keep the in-app room open during the interview — that&apos;s where the AI interviewer and proctoring run.</p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <a href={i.zoom.joinUrl} target="_blank" rel="noreferrer" className="break-all text-sm font-medium text-brand-600 hover:underline">{i.zoom.joinUrl}</a>
+                {isWebLink(i.zoom.joinUrl) ? (
+                  <a href={i.zoom.joinUrl} target="_blank" rel="noreferrer" className="break-all text-sm font-medium text-brand-600 hover:underline">{i.zoom.joinUrl}</a>
+                ) : (
+                  <span className="break-all text-sm text-slate-600">{i.zoom.joinUrl}</span>
+                )}
                 {i.zoom.password && <Badge>Passcode: {i.zoom.password}</Badge>}
               </div>
             </Card>

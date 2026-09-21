@@ -33,7 +33,7 @@ import { useProctoring, type FaceStatus } from "@/lib/client/proctoring";
 import { CAMERA_PROBLEM_TEXT, PROBLEM_GRACE_MS, useCameraGuard, type CameraProblem } from "@/lib/client/camera-guard";
 import { useInterview } from "@/lib/client/useInterview";
 import { ROUND_LABELS, type FollowUp, type PlanQuestion, type RoundType } from "@/lib/schemas";
-import type { Clarification, InterviewResponse } from "@/lib/types";
+import { isWebLink, type Clarification, type InterviewResponse } from "@/lib/types";
 import type { VoiceStatus } from "@/lib/client/interviewer-voice";
 
 const WELCOME_BACK = "Welcome back. Let's continue where we left off.";
@@ -619,9 +619,9 @@ export function InterviewRoom({ id }: { id: string }) {
             )}
           </div>
 
-          {inSession && interview.zoom && (
-            <a href={interview.zoom.joinUrl} target="_blank" rel="noreferrer" className="rounded-xl bg-white/5 px-4 py-3 text-xs text-slate-300 ring-1 ring-white/10 hover:bg-white/10">
-              Zoom meeting for panelists: <span className="text-brand-300 underline">{interview.zoom.joinUrl}</span>
+          {inSession && isWebLink(interview.zoom?.joinUrl) && (
+            <a href={interview.zoom!.joinUrl} target="_blank" rel="noreferrer" className="rounded-xl bg-white/5 px-4 py-3 text-xs text-slate-300 ring-1 ring-white/10 hover:bg-white/10">
+              Zoom meeting for panelists: <span className="text-brand-300 underline">{interview.zoom!.joinUrl}</span>
             </a>
           )}
         </div>

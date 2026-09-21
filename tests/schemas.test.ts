@@ -16,3 +16,12 @@ describe("InterviewConfigSchema", () => {
     expect(InterviewConfigSchema.safeParse({ field: "x", role: "r", seniority: "mid", company: "y", rounds: ["hr"], questionsPerRound: 20 }).success).toBe(false);
   });
 });
+
+describe("meeting link", () => {
+  const base = { field: "Backend", role: "Engineer", seniority: "mid", company: "ACME", rounds: ["technical"] };
+  it("accepts an empty or web link and rejects other schemes", () => {
+    expect(InterviewConfigSchema.safeParse({ ...base, zoomUrl: "" }).success).toBe(true);
+    expect(InterviewConfigSchema.safeParse({ ...base, zoomUrl: "https://zoom.us/j/123" }).success).toBe(true);
+    expect(InterviewConfigSchema.safeParse({ ...base, zoomUrl: "javascript:alert(1)" }).success).toBe(false);
+  });
+});

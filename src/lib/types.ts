@@ -121,6 +121,9 @@ export interface Evaluation {
   generatedAt: string;
 }
 
+/** A link is only rendered when it is a web address — never `javascript:` or another scheme. */
+export const isWebLink = (url: string | null | undefined): boolean => /^https?:\/\//i.test(url ?? "");
+
 /**
  * An interview that ended before any question was answered has no rounds, so there is nothing to
  * score: it is recorded, but it is not a result and must stay out of averages, trends and charts.

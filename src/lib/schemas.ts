@@ -37,7 +37,11 @@ export const InterviewConfigSchema = z.object({
   proctoring: z.boolean().default(true),
   recordVideo: z.boolean().default(true),
   zoomMode: z.enum(["none", "auto", "manual"]).default("none"),
-  zoomUrl: z.string().trim().default(""),
+  zoomUrl: z
+    .string()
+    .trim()
+    .default("")
+    .refine((v) => !v || /^https?:\/\//i.test(v), "The meeting link must start with http:// or https://"),
   scheduledAt: z.string().default(""),
 });
 export type InterviewConfig = z.infer<typeof InterviewConfigSchema>;
