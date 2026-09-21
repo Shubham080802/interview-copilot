@@ -13,7 +13,7 @@ const LINKS = [
 export function NavLinks() {
   const path = usePathname();
   return (
-    <nav className="flex flex-wrap items-center gap-1">
+    <nav className="flex items-center gap-1 whitespace-nowrap">
       {LINKS.map((l) => {
         const active = l.href === "/" ? path === "/" : path.startsWith(l.href);
         return (
