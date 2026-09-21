@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
 import { Badge, Bar, Card, EmptyState, LinkButton } from "@/components/ui";
 import { getInsights, getInterview, listInterviews } from "@/lib/repo";
+import { plural } from "@/lib/format";
 import { ROUND_LABELS, type RoundType } from "@/lib/schemas";
 import { StudyPlanPanel } from "./StudyPlanPanel";
 
@@ -21,7 +22,7 @@ export default async function ProgressPage() {
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Progress & learning</h1>
-          <p className="mt-1 text-sm text-slate-500">Everything the app has learned from your {insights.sessionCount} completed interview(s). New interviews are generated from this profile.</p>
+          <p className="mt-1 text-sm text-slate-500">Everything the app has learned from your {plural(insights.sessionCount, "completed interview")}. New interviews are generated from this profile.</p>
         </div>
         <a href="/api/export-all" className="text-sm font-medium text-brand-600 hover:underline">Download all my data (JSON)</a>
       </div>

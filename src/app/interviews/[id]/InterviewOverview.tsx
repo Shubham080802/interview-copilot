@@ -6,6 +6,7 @@ import { Badge, Button, Card, LinkButton, Markdown, Spinner } from "@/components
 import { api, formatDate } from "@/lib/client/api";
 import { useInterview } from "@/lib/client/useInterview";
 import { ROUND_LABELS } from "@/lib/schemas";
+import { plural } from "@/lib/format";
 import { isWebLink } from "@/lib/types";
 
 const PREP_STEPS = ["Loading your interview history", "Creating Zoom meeting", "Researching", "Designing", "Ready"];
@@ -105,7 +106,7 @@ export function InterviewOverview({ id }: { id: string }) {
             <div>
               <h2 className="font-semibold">{i.status === "ready" ? "Your interview is ready" : "Interview in progress"}</h2>
               <p className="text-sm text-slate-600">
-                {i.plan.rounds.length} round(s) · {totalQuestions} questions · interviewer: {i.plan.interviewer_name}
+                {plural(i.plan.rounds.length, "round")} · {plural(totalQuestions, "question")} · interviewer: {i.plan.interviewer_name}
                 {i.status === "in_progress" && ` · ${responses.length} answered so far`}
               </p>
             </div>

@@ -25,6 +25,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CodeEditor } from "@/components/CodeEditor";
 import { cx, Spinner } from "@/components/ui";
 import { api, formatDuration } from "@/lib/client/api";
+import { plural } from "@/lib/format";
 import { useInterviewerVoice } from "@/lib/client/interviewer-voice";
 import { ENROLLMENT_TEXT, useVoiceMonitor, type MonitorStatus } from "@/lib/client/voice-monitor";
 import { otherVoiceEntries, pruneOlderThan, withoutInterviewerEcho, wordCount, type TranscriptEntry, type VoiceInterval } from "@/lib/voice-id/transcript";
@@ -531,7 +532,7 @@ export function InterviewRoom({ id }: { id: string }) {
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold">{interview.config.role} · {interview.config.company}</div>
           <div className="text-xs text-slate-400">
-            {turn ? `${ROUND_LABELS[turn.roundType]} round · Question ${Math.min(turn.index + 1, items.length)} of ${items.length}${turn.isFollowUp ? " · follow-up" : ""}` : `${items.length} questions`}
+            {turn ? `${ROUND_LABELS[turn.roundType]} round · Question ${Math.min(turn.index + 1, items.length)} of ${items.length}${turn.isFollowUp ? " · follow-up" : ""}` : `${plural(items.length, "question")}`}
           </div>
         </div>
         <div className="flex items-center gap-2 text-xs">
@@ -886,7 +887,7 @@ function SetupPanel(props: {
   return (
     <div className="flex flex-1 flex-col rounded-2xl bg-white/5 p-6 ring-1 ring-white/10">
       <h1 className="text-xl font-semibold">{props.resumed ? "Resume your interview" : "Get ready for your interview"}</h1>
-      <p className="mt-1 text-sm text-slate-400">{props.name} will ask {props.questionCount} questions out loud. Answer by voice or by typing; coding questions open an editor.</p>
+      <p className="mt-1 text-sm text-slate-400">{props.name} will ask {plural(props.questionCount, "question")} out loud. Answer by voice or by typing; coding questions open an editor.</p>
 
       <ul className="mt-6 space-y-3">
         {checks.map((c) => (
