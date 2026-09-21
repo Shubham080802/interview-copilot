@@ -107,6 +107,10 @@ export async function recoverInterruptedTasks(db: SqlDb, staleAfterMs: number): 
 /** Local SQLite file via Node's built-in node:sqlite. */
 export async function openSqlite(file: string): Promise<SqlDb> {
   const { DatabaseSync } = await import("node:sqlite");
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  // The data directory isn't in the repository, so it may not exist on a fresh clone.
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   const conn = new DatabaseSync(file);
   conn.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
   return {
