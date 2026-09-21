@@ -16,9 +16,13 @@ export interface VoiceInterval {
 /** Recognizers deliver final text a little after the words were spoken. */
 export const RECOGNITION_DELAY_MS = 2500;
 
+/** The recognized entries that fall inside a moment when another voice was heard. */
+export function otherVoiceEntries(entries: TranscriptEntry[], intervals: VoiceInterval[], delayMs = RECOGNITION_DELAY_MS): TranscriptEntry[] {
+  return entries.filter((e) => intervals.some((iv) => e.at >= iv.start && e.at <= iv.end + delayMs));
+}
+
 export function otherVoiceTranscript(entries: TranscriptEntry[], intervals: VoiceInterval[], delayMs = RECOGNITION_DELAY_MS): string {
-  return entries
-    .filter((e) => intervals.some((iv) => e.at >= iv.start && e.at <= iv.end + delayMs))
+  return otherVoiceEntries(entries, intervals, delayMs)
     .map((e) => e.text)
     .join(" ")
     .replace(/\s+/g, " ")

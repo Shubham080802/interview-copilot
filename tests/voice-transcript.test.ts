@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { otherVoiceTranscript, pruneOlderThan, RECOGNITION_DELAY_MS, withoutInterviewerEcho, wordCount } from "@/lib/voice-id/transcript";
+import { otherVoiceEntries, otherVoiceTranscript, pruneOlderThan, RECOGNITION_DELAY_MS, withoutInterviewerEcho, wordCount } from "@/lib/voice-id/transcript";
 
 describe("otherVoiceTranscript", () => {
   const entries = [
@@ -20,6 +20,23 @@ describe("otherVoiceTranscript", () => {
 
   it("returns nothing without other-voice intervals", () => {
     expect(otherVoiceTranscript(entries, [])).toBe("");
+  });
+
+  /**
+   * Voice detection lags recognition, so the room marks speech as checked only up to the last entry
+   * it could actually judge; anything later stays eligible once its detection arrives.
+   */
+  it("reports which entries were judged, so later speech can still be checked", () => {
+    const judged = otherVoiceEntries(entries, intervals);
+    expect(judged.map((e) => e.text)).toEqual(["use a hash map", "store the index"]);
+    const lastJudged = judged[judged.length - 1].at;
+    expect(entries.filter((e) => e.at > lastJudged)).toHaveLength(1);
+
+    // The interval for that last utterance arrives a moment later: it must still be judged.
+    const withLateInterval = [...intervals, { start: 29_000, end: 31_000 }];
+    expect(otherVoiceEntries(entries.filter((e) => e.at > lastJudged), withLateInterval).map((e) => e.text)).toEqual([
+      "so the complexity is linear",
+    ]);
   });
 });
 

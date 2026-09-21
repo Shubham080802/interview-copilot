@@ -27,7 +27,7 @@ import { cx, Spinner } from "@/components/ui";
 import { api, formatDuration } from "@/lib/client/api";
 import { useInterviewerVoice } from "@/lib/client/interviewer-voice";
 import { ENROLLMENT_TEXT, useVoiceMonitor, type MonitorStatus } from "@/lib/client/voice-monitor";
-import { otherVoiceTranscript, pruneOlderThan, withoutInterviewerEcho, wordCount, type TranscriptEntry, type VoiceInterval } from "@/lib/voice-id/transcript";
+import { otherVoiceEntries, pruneOlderThan, withoutInterviewerEcho, wordCount, type TranscriptEntry, type VoiceInterval } from "@/lib/voice-id/transcript";
 import { useMediaStream, useRecorder, useSpeechRecognition } from "@/lib/client/media";
 import { useProctoring, type FaceStatus } from "@/lib/client/proctoring";
 import { CAMERA_PROBLEM_TEXT, PROBLEM_GRACE_MS, useCameraGuard, type CameraProblem } from "@/lib/client/camera-guard";
@@ -308,12 +308,15 @@ export function InterviewRoom({ id }: { id: string }) {
       interviewerLines.current,
     );
     if (!fresh.length) return;
-    const transcript = otherVoiceTranscript(fresh, otherVoiceIntervals.current);
+    const heard = otherVoiceEntries(fresh, otherVoiceIntervals.current);
+    const transcript = heard.map((e) => e.text).join(" ").replace(/\s+/g, " ").trim();
     if (wordCount(transcript) < 5) return;
 
     state.inFlight = true;
     state.lastCheckAt = now;
-    state.checkedUpTo = fresh[fresh.length - 1].at;
+    // Only mark what was actually judged: speech whose voice detection is still being computed
+    // must stay eligible, or a helper's sentence would be dropped for arriving a moment late.
+    state.checkedUpTo = heard[heard.length - 1].at;
     api<{ cancelled: boolean; message: string | null }>(`/api/interviews/${id}/assist-check`, {
       method: "POST",
       json: { questionId: current.question.id, prompt: current.prompt, transcript },
