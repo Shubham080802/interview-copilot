@@ -7,6 +7,7 @@ import { Badge, Bar, Button, Card, cx, EmptyState, inputClass, Markdown, ScoreRi
 import { api, formatDate, REC_LABELS } from "@/lib/client/api";
 import { useSpeechRecognition } from "@/lib/client/media";
 import { useInterview, type InterviewData } from "@/lib/client/useInterview";
+import { RecordingPlayer } from "./RecordingPlayer";
 import { EVENT_LABELS } from "@/lib/integrity";
 import { ROUND_LABELS, type QuestionEvaluation, type RetryEvaluation } from "@/lib/schemas";
 import { isScored, type CoachMessage, type InterviewResponse } from "@/lib/types";
@@ -16,6 +17,12 @@ type Tab = "summary" | "answers" | "coach" | "integrity" | "recording";
 export function Report({ id }: { id: string }) {
   const { data, error, reload } = useInterview(id, (d) => d?.interview.status === "evaluating");
   const [tab, setTab] = useState<Tab>("summary");
+
+  // The audio tab disappears once the last recording is deleted.
+  const hasRecording = data?.interview.hasRecording ?? false;
+  useEffect(() => {
+    if (tab === "recording" && !hasRecording) setTab("summary");
+  }, [tab, hasRecording]);
 
   if (error) return <Card className="text-rose-700">{error}</Card>;
   if (!data) return <div className="flex items-center gap-2 text-slate-500"><Spinner /> Loading report…</div>;
@@ -90,14 +97,13 @@ export function Report({ id }: { id: string }) {
             <p className="text-sm text-slate-500">This recording has {i.recordingSegments.length} parts — a new part starts when the interview is resumed after leaving the room.</p>
           )}
           {i.recordingSegments.map((segment) => (
-            <Card key={segment}>
-              {i.recordingSegments.length > 1 && <div className="mb-2 text-sm font-medium">Part {segment}</div>}
-              <audio controls preload="metadata" src={`/api/interviews/${id}/recording?segment=${segment}`} className="w-full" />
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
-                <span>Replay the conversation to review your answers, pace and clarity.</span>
-                <a href={`/api/interviews/${id}/recording?segment=${segment}&download=1`} className="font-medium text-brand-600 hover:underline">Download audio</a>
-              </div>
-            </Card>
+            <RecordingPlayer
+              key={segment}
+              interviewId={id}
+              segment={segment}
+              part={i.recordingSegments.length > 1 ? `Part ${segment}` : undefined}
+              onDeleted={reload}
+            />
           ))}
         </div>
       )}
