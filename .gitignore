@@ -9,3 +9,6 @@ public/mediapipe/
 public/voice/
 .DS_Store
 .vercel
+
+# Local voice clips used for manual end-to-end tests of the room.
+public/dev-voice/
