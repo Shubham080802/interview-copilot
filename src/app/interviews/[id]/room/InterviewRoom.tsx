@@ -84,6 +84,11 @@ export function InterviewRoom({ id }: { id: string }) {
   const [clarifications, setClarifications] = useState<Clarification[]>([]);
   const [askOpen, setAskOpen] = useState(false);
   const [askText, setAskText] = useState("");
+  // Set after mount: the server doesn't know which keyboard the candidate has.
+  const [shortcutKey, setShortcutKey] = useState("Ctrl");
+  useEffect(() => {
+    if (/Mac|iPhone|iPad/.test(navigator.userAgent)) setShortcutKey("⌘");
+  }, []);
   const [asking, setAsking] = useState(false);
   const srTarget = useRef<"answer" | "ask">("answer");
   const turnRef = useRef<Turn | null>(null);
@@ -515,6 +520,7 @@ export function InterviewRoom({ id }: { id: string }) {
   const limit = turn?.isFollowUp ? 150 : (q?.time_limit_seconds ?? 180);
   const overTime = elapsed > limit;
   const canAnswer = phase === "question";
+  const canSubmit = canAnswer && Boolean(answer.trim() || (isCoding && code.trim() && code !== (q?.starter_code ?? "")));
   const face = FACE_LABEL[proctoringOn ? proctor.faceStatus : "unavailable"];
 
   return (
@@ -775,6 +781,12 @@ export function InterviewRoom({ id }: { id: string }) {
                 <textarea
                   value={answer}
                   onChange={(e) => setAnswer(e.target.value)}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canSubmit) {
+                      e.preventDefault();
+                      void submit(false);
+                    }
+                  }}
                   disabled={!canAnswer}
                   placeholder={sr.supported ? "Press the microphone and start speaking — your words appear here. You can also type." : "Type your answer here (voice answers need Chrome or Edge)."}
                   className={cx("w-full flex-1 resize-none rounded-xl bg-black/30 p-3 text-sm leading-relaxed text-slate-100 outline-none ring-1 ring-white/10 placeholder:text-slate-500 focus:ring-brand-500", isCoding ? "min-h-[90px]" : "min-h-[180px]")}
@@ -798,13 +810,14 @@ export function InterviewRoom({ id }: { id: string }) {
                     </button>
                   )}
                   <span className="text-xs text-slate-500">{answeredCount} of {items.length} answered</span>
+                  <span className="hidden text-xs text-slate-600 sm:inline">·  {shortcutKey}+Enter to submit</span>
                   <div className="ml-auto flex gap-2">
                     <button onClick={() => submit(true)} disabled={!canAnswer} className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-sm text-slate-300 hover:bg-white/10 disabled:opacity-40">
                       <SkipForward className="h-4 w-4" /> Skip
                     </button>
                     <button
                       onClick={() => submit(false)}
-                      disabled={!canAnswer || (!answer.trim() && !(isCoding && code.trim() && code !== (q?.starter_code ?? "")))}
+                      disabled={!canSubmit}
                       className="inline-flex items-center gap-2 rounded-full bg-brand-600 px-5 py-2 text-sm font-medium hover:bg-brand-500 disabled:opacity-40"
                     >
                       {phase === "submitting" ? <Spinner className="h-4 w-4" /> : null}
