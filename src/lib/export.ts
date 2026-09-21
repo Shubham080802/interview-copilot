@@ -1,7 +1,7 @@
 import "server-only";
 import { EVENT_LABELS } from "./integrity";
 import { ROUND_LABELS } from "./schemas";
-import type { CoachMessage, Interview, InterviewResponse, ProctorEvent } from "./types";
+import { isScored, type CoachMessage, type Interview, type InterviewResponse, type ProctorEvent } from "./types";
 
 export interface InterviewBundle {
   exportedAt: string;
@@ -29,8 +29,9 @@ export function toMarkdown(b: InterviewBundle): string {
   lines.push(`# Interview report — ${i.config.role} at ${i.config.company}`);
   lines.push(`_${new Date(i.createdAt).toLocaleString()} · ${i.config.field} · ${i.config.seniority} · ${i.generatedBy === "ai" ? "AI generated" : "Demo mode"}_`);
   if (ev) {
-    lines.push(`\n## Result\n**Overall score:** ${ev.overall.overall_score}/100 — **${REC[ev.overall.hire_recommendation]}**\n\n**${ev.overall.headline}**\n\n${ev.overall.summary}`);
-    lines.push(`\n### Scores by round\n${ev.rounds.map((r) => `- ${ROUND_LABELS[r.round_type]}: ${r.round_score}/100`).join("\n")}`);
+    const result = isScored(ev) ? `**Overall score:** ${ev.overall.overall_score}/100 — **${REC[ev.overall.hire_recommendation]}**` : "**Not scored** — no question was answered.";
+    lines.push(`\n## Result\n${result}\n\n**${ev.overall.headline}**\n\n${ev.overall.summary}`);
+    if (ev.rounds.length) lines.push(`\n### Scores by round\n${ev.rounds.map((r) => `- ${ROUND_LABELS[r.round_type]}: ${r.round_score}/100`).join("\n")}`);
     lines.push(`\n### Communication (${ev.overall.communication.score}/10)\n${ev.overall.communication.notes}`);
     lines.push(`\n### Top strengths\n${list(ev.overall.top_strengths)}\n\n### Key gaps\n${list(ev.overall.key_gaps)}`);
     lines.push(`\n### Action plan\n${ev.overall.action_plan.map((a, n) => `${n + 1}. **${a.title}** — ${a.detail}${a.resources.length ? ` _(Resources: ${a.resources.join(", ")})_` : ""}`).join("\n")}`);

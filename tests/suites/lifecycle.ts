@@ -57,13 +57,27 @@ export function lifecycleSuite() {
       expect(repeated).toHaveLength(0);
     });
 
-    it("does not touch insights when nothing was answered", async () => {
+    it("does not touch insights or report a score when nothing was answered", async () => {
       const before = (await repo.getInsights()).sessionCount;
       const interview = await prepared({ rounds: ["hr"], questionsPerRound: 1 });
       startEvaluation(interview.id);
       await waitForStatus(interview.id, "completed");
       expect((await repo.getInterview(interview.id))!.evaluation!.rounds).toHaveLength(0);
       expect((await repo.getInsights()).sessionCount).toBe(before);
+
+      // An unanswered interview is not a result: it must not count as 0/100 in averages or charts.
+      const summary = (await repo.listInterviews()).find((i) => i.id === interview.id)!;
+      expect(summary.overallScore).toBeNull();
+      expect(summary.recommendation).toBeNull();
+      const bundle = {
+        exportedAt: new Date().toISOString(),
+        interview: (await repo.getInterview(interview.id))!,
+        responses: [],
+        proctorEvents: [],
+        coachSession: [],
+      };
+      expect(toMarkdown(bundle)).toContain("**Not scored**");
+      expect(toMarkdown(bundle)).not.toContain("Overall score:");
     });
 
     it("keeps profile, coach chat order, snapshots and deletes everything for an interview", async () => {

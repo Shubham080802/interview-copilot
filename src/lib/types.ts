@@ -121,6 +121,12 @@ export interface Evaluation {
   generatedAt: string;
 }
 
+/**
+ * An interview that ended before any question was answered has no rounds, so there is nothing to
+ * score: it is recorded, but it is not a result and must stay out of averages, trends and charts.
+ */
+export const isScored = (evaluation: Evaluation | null | undefined): boolean => Boolean(evaluation && evaluation.rounds.length > 0);
+
 export interface Interview {
   id: string;
   createdAt: string;

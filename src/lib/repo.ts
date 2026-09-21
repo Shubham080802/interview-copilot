@@ -3,15 +3,16 @@ import { nanoid } from "nanoid";
 import type { InterviewConfig } from "./schemas";
 import { storage } from "./storage";
 import { fromJson, toJson, type Row } from "./storage/sql";
-import type {
-  CoachMessage,
-  Interview,
-  InterviewResponse,
-  InterviewStatus,
-  InterviewSummary,
-  ProctorEvent,
-  Profile,
-  StoredInsights,
+import {
+  isScored,
+  type CoachMessage,
+  type Interview,
+  type InterviewResponse,
+  type InterviewStatus,
+  type InterviewSummary,
+  type ProctorEvent,
+  type Profile,
+  type StoredInsights,
 } from "./types";
 
 const now = () => new Date().toISOString();
@@ -115,8 +116,8 @@ export async function listInterviews(): Promise<InterviewSummary[]> {
       company: i.config.company,
       field: i.config.field,
       rounds: i.config.rounds,
-      overallScore: i.evaluation?.overall.overall_score ?? null,
-      recommendation: i.evaluation?.overall.hire_recommendation ?? null,
+      overallScore: isScored(i.evaluation) ? i.evaluation!.overall.overall_score : null,
+      recommendation: isScored(i.evaluation) ? i.evaluation!.overall.hire_recommendation : null,
       integrityLevel: i.integrity?.level ?? null,
       terminated: Boolean(i.integrity?.terminatedReason),
     };

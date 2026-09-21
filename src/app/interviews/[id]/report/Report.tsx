@@ -9,7 +9,7 @@ import { useSpeechRecognition } from "@/lib/client/media";
 import { useInterview, type InterviewData } from "@/lib/client/useInterview";
 import { EVENT_LABELS } from "@/lib/integrity";
 import { ROUND_LABELS, type QuestionEvaluation, type RetryEvaluation } from "@/lib/schemas";
-import type { CoachMessage, InterviewResponse } from "@/lib/types";
+import { isScored, type CoachMessage, type InterviewResponse } from "@/lib/types";
 
 type Tab = "summary" | "answers" | "coach" | "integrity" | "recording";
 
@@ -111,13 +111,18 @@ function Summary({ data }: { data: InterviewData }) {
   const { interview: i } = data;
   const ev = i.evaluation!;
   const o = ev.overall;
+  const scored = isScored(ev); // nothing answered: show the note, not a 0/100 verdict
   return (
     <div className="grid gap-6 lg:grid-cols-3">
       <div className="space-y-6 lg:col-span-2">
         <Card className="flex flex-wrap items-center gap-6">
-          <ScoreRing score={o.overall_score} size={120} label="overall" />
+          {scored && <ScoreRing score={o.overall_score} size={120} label="overall" />}
           <div className="min-w-0 flex-1">
-            <Badge tone={scoreTone(o.overall_score)} className="text-sm">{REC_LABELS[o.hire_recommendation]}</Badge>
+            {scored ? (
+              <Badge tone={scoreTone(o.overall_score)} className="text-sm">{REC_LABELS[o.hire_recommendation]}</Badge>
+            ) : (
+              <Badge className="text-sm">Not scored</Badge>
+            )}
             <h2 className="mt-2 text-lg font-semibold">{o.headline}</h2>
             <Markdown className="mt-1 text-slate-600">{o.summary}</Markdown>
           </div>
