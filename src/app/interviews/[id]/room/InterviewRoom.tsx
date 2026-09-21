@@ -376,7 +376,12 @@ export function InterviewRoom({ id }: { id: string }) {
 
   // Sound check: hear the interviewer (and unlock audio) before the interview starts.
   async function testVoice() {
-    await speaker.mixer?.resume().catch(() => {}); // the click is the gesture browsers require
+    setActionError("");
+    const audible = await speaker.mixer?.resume(); // the click is the gesture browsers require
+    if (audible === false) {
+      setActionError("Your browser is still blocking audio. Click anywhere on the page, then try again.");
+      return;
+    }
     await speaker.speak(`Hi, I'm ${plan?.interviewer_name ?? "Alex"}. I'll be your interviewer today. If you can hear me clearly, you're ready to start.`);
   }
 
@@ -387,7 +392,7 @@ export function InterviewRoom({ id }: { id: string }) {
     setActionError("");
     // Request full screen and unlock audio synchronously inside the click (user gesture); never block on them.
     if (proctoringOn && !document.fullscreenElement) document.documentElement.requestFullscreen?.().catch(() => {});
-    const audioUnlocked = speaker.mixer?.resume().catch(() => {});
+    const audioUnlocked = speaker.mixer?.resume(); // bounded: never blocks the start on audio
     try {
       await confirmPresence();
       await api(`/api/interviews/${id}/start`, { method: "POST", json: {} });

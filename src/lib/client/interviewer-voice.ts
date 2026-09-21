@@ -35,8 +35,23 @@ export class ConversationMixer {
     return this.destination.stream;
   }
 
-  resume(): Promise<void> {
-    return this.ctx.state === "running" ? Promise.resolve() : this.ctx.resume();
+  /**
+   * Unlocks audio playback. Browsers only allow this while a user gesture is active, and when there
+   * is none `resume()` returns a promise that never settles — so it is bounded here: the interview
+   * must never hang waiting for audio.
+   * @returns whether audio is now playing.
+   */
+  resume(timeoutMs = 2000): Promise<boolean> {
+    if (this.ctx.state === "running") return Promise.resolve(true);
+    return Promise.race([
+      this.ctx.resume().then(() => this.ctx.state === "running").catch(() => false),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+    ]);
+  }
+
+  /** True once audio is actually playing (false while the browser still blocks it). */
+  get unlocked(): boolean {
+    return this.ctx.state === "running";
   }
 
   /** The candidate's mic goes into the recording only — never to the speakers (no echo). */
@@ -66,11 +81,16 @@ export class ConversationMixer {
     source.connect(this.voiceBus);
     this.playing.add(source);
     return new Promise((resolve) => {
-      source.onended = () => {
+      // A suspended context never fires "ended", and some browsers drop it: finish anyway, a little
+      // after the clip should have played, so the interview always moves on.
+      const safety = setTimeout(() => finish(), (buffer.duration + 1.5) * 1000);
+      const finish = () => {
+        clearTimeout(safety);
         this.playing.delete(source);
         source.disconnect();
         resolve();
       };
+      source.onended = finish;
       source.start();
     });
   }
