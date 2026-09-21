@@ -73,7 +73,10 @@ export function toMarkdown(b: InterviewBundle): string {
   return lines.join("\n");
 }
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// Quotes are escaped too: text from the web (e.g. a research source URL) is placed inside HTML
+// attributes, where a bare quote would end the attribute and let markup in.
+const esc = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 /** Minimal markdown → HTML for the printable report (headings, lists, bold, code, quotes, tables). */
 function mdToHtml(md: string): string {
@@ -86,7 +89,7 @@ function mdToHtml(md: string): string {
       .replace(/`([^`]+)`/g, "<code>$1</code>")
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/_([^_]+)_/g, "<em>$1</em>")
-      .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2">$1</a>');
+      .replace(/\[([^\]]+)\]\((https?:[^)\s"']+)\)/g, '<a href="$2">$1</a>');
   const closeBlocks = () => {
     if (inList) out.push("</ul>");
     if (inTable) out.push("</table>");
