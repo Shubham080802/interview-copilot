@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { basicJobPosting, extractPdfText, guessSeniority, htmlToText, isPdf, isPrivateAddress, safeFetchText, scrapeJobPage } from "@/lib/importers";
+import { basicJobPosting, extractPdfText, guessSeniority, htmlToText, isPdf, isPrivateAddress, publicOnlyLookup, safeFetchText, scrapeJobPage } from "@/lib/importers";
 import { importJobPosting, importResume } from "@/lib/service";
 import { makePdf } from "./pdf";
 
@@ -18,6 +18,16 @@ describe("private address blocking", () => {
     await expect(safeFetchText("file:///etc/passwd")).rejects.toThrow(/http/i);
     await expect(safeFetchText("https://example.com:8443/job")).rejects.toThrow(/port/i);
     await expect(safeFetchText("not a url")).rejects.toThrow(/valid URL/i);
+  });
+
+  it("refuses the connection when the name resolves to a private address", async () => {
+    // The check runs in the lookup the socket uses, so a name that only points inside the network
+    // at connection time (DNS rebinding) is refused as well.
+    const lookup = () =>
+      new Promise((resolve, reject) => {
+        publicOnlyLookup("localhost", {}, (err, address) => (err ? reject(err) : resolve(address)));
+      });
+    await expect(lookup()).rejects.toThrow(/private|local/i);
   });
 
   it("does not fall back to other strategies for blocked URLs", async () => {

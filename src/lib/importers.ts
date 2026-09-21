@@ -1,5 +1,8 @@
 import "server-only";
 import dns from "node:dns/promises";
+import dnsCallback from "node:dns";
+import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 import { SENIORITY_LEVELS, type JobPosting } from "./schemas";
 
@@ -44,38 +47,81 @@ async function assertPublicUrl(raw: string): Promise<URL> {
 }
 
 const MAX_BYTES = 3 * 1024 * 1024;
+const REQUEST_TIMEOUT_MS = 12_000;
+
+/**
+ * The DNS lookup the connection itself uses. Checking the address here, rather than only before the
+ * request, closes the window in which a hostname resolves to a public address while it is being
+ * validated and to a private one by the time it is connected to.
+ */
+export const publicOnlyLookup: net.LookupFunction = (hostname, options, callback) => {
+  // Node asks for every address at once when it races IPv4 and IPv6, so the result is either one
+  // address or a list; whichever it is, none of them may be inside a private network.
+  dnsCallback.lookup(hostname, options, (err, address, family) => {
+    if (err) return callback(err, address as string, family);
+    const resolved = Array.isArray(address) ? (address as dnsCallback.LookupAddress[]) : [{ address: address as string, family }];
+    if (resolved.some((a) => isPrivateAddress(a.address))) {
+      return callback(new ImportError("Links to private or local network addresses can't be imported."), address as string, family);
+    }
+    callback(null, address as string, family);
+  });
+};
+
+interface FetchedPage {
+  status: number;
+  location: string | null;
+  html: string;
+}
+
+/** One request, without following redirects, capped in size and time. */
+function requestPage(url: URL): Promise<FetchedPage> {
+  const client = url.protocol === "https:" ? https : http;
+  return new Promise<FetchedPage>((resolve, reject) => {
+    const request = client.request(
+      url,
+      {
+        lookup: publicOnlyLookup,
+        timeout: REQUEST_TIMEOUT_MS,
+        headers: { "User-Agent": "Mozilla/5.0 (InterviewCopilot job importer)", Accept: "text/html,application/xhtml+xml" },
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        response.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > MAX_BYTES) return response.destroy(); // keep what has arrived
+          chunks.push(chunk);
+        });
+        const finish = () =>
+          resolve({
+            status: response.statusCode ?? 0,
+            location: typeof response.headers.location === "string" ? response.headers.location : null,
+            html: Buffer.concat(chunks).toString("utf8"),
+          });
+        response.on("end", finish);
+        response.on("close", finish); // after the size cap destroyed the response
+        response.on("error", reject);
+      },
+    );
+    request.on("timeout", () => request.destroy(new ImportError("The website took too long to respond.")));
+    request.on("error", reject);
+    request.end();
+  });
+}
 
 /** Fetches a public web page with redirect re-validation, a size cap and a timeout. */
 export async function safeFetchText(raw: string): Promise<{ url: string; html: string }> {
   let url = await assertPublicUrl(raw);
   for (let hop = 0; hop < 4; hop++) {
-    const res = await fetch(url, {
-      redirect: "manual",
-      signal: AbortSignal.timeout(12_000),
-      headers: { "User-Agent": "Mozilla/5.0 (InterviewCopilot job importer)", Accept: "text/html,application/xhtml+xml" },
-    }).catch(() => {
-      throw new ImportError("The website didn't respond.");
+    const page = await requestPage(url).catch((err) => {
+      throw err instanceof ImportError ? err : new ImportError("The website didn't respond.");
     });
-    if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
-      url = await assertPublicUrl(new URL(res.headers.get("location")!, url).toString());
+    if (page.status >= 300 && page.status < 400 && page.location) {
+      url = await assertPublicUrl(new URL(page.location, url).toString());
       continue;
     }
-    if (!res.ok) throw new ImportError(`The website returned an error (${res.status}).`);
-    const reader = res.body?.getReader();
-    if (!reader) return { url: url.toString(), html: "" };
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.length;
-      if (size > MAX_BYTES) {
-        await reader.cancel();
-        break;
-      }
-      chunks.push(value);
-    }
-    return { url: url.toString(), html: Buffer.concat(chunks).toString("utf8") };
+    if (page.status < 200 || page.status >= 300) throw new ImportError(`The website returned an error (${page.status}).`);
+    return { url: url.toString(), html: page.html };
   }
   throw new ImportError("Too many redirects.");
 }
