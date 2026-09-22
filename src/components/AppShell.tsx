@@ -1,9 +1,12 @@
+import { UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { aiEnabled, MODEL } from "@/lib/ai/client";
+import { authConfigured } from "@/lib/auth";
 import { NavLinks } from "./NavLinks";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const ai = aiEnabled();
+  const loginEnabled = authConfigured();
   return (
     <div className="min-h-screen">
       <header className="no-print sticky top-0 z-30 border-b border-slate-200 bg-white/85 backdrop-blur">
@@ -23,6 +26,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               {ai ? `AI mode · ${MODEL}` : "Demo mode · no API key"}
             </span>
+            {loginEnabled && <UserButton afterSwitchSessionUrl="/sign-in" />}
           </div>
           <div className="-mx-1 mt-2 overflow-x-auto sm:hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <NavLinks />
