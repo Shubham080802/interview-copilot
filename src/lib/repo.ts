@@ -2,7 +2,7 @@ import "server-only";
 import { nanoid } from "nanoid";
 import type { InterviewConfig } from "./schemas";
 import { storage } from "./storage";
-import { fromJson, toJson, type Row } from "./storage/sql";
+import { fromJson, LEGACY_USER_ID, toJson, type Row } from "./storage/sql";
 import {
   isScored,
   type CoachMessage,
@@ -22,18 +22,35 @@ export const isValidId = (id: string) => ID_RE.test(id);
 const sql = async () => (await storage()).sql;
 const files = async () => (await storage()).files;
 
+/** Tenant id used when no login is configured (local dev, tests) and for pre-multi-user data. */
+export { LEGACY_USER_ID };
+
+/**
+ * Reassigns the pre-multi-user data (profile, insights, interviews) to a real account, the first time
+ * its owner signs in. See src/lib/current-user.ts for when this runs.
+ */
+export async function claimLegacyData(userId: string): Promise<void> {
+  const db = await sql();
+  await db.run("UPDATE interviews SET user_id = ? WHERE user_id = ?", [userId, LEGACY_USER_ID]);
+  await db.run("UPDATE profiles SET user_id = ? WHERE user_id = ?", [userId, LEGACY_USER_ID]);
+  await db.run("UPDATE user_insights SET user_id = ? WHERE user_id = ?", [userId, LEGACY_USER_ID]);
+}
+
 /* ----------------------------- profile ----------------------------- */
 
 const DEFAULT_PROFILE: Profile = { name: "", headline: "", experienceYears: 0, resume: "", updatedAt: "" };
 
-export async function getProfile(): Promise<Profile> {
-  const row = await (await sql()).get("SELECT data FROM profile WHERE id = 1");
+export async function getProfile(userId = LEGACY_USER_ID): Promise<Profile> {
+  const row = await (await sql()).get("SELECT data FROM profiles WHERE user_id = ?", [userId]);
   return { ...DEFAULT_PROFILE, ...(fromJson<Profile>(row?.data) ?? {}) };
 }
 
-export async function saveProfile(p: Omit<Profile, "updatedAt">): Promise<Profile> {
+export async function saveProfile(p: Omit<Profile, "updatedAt">, userId = LEGACY_USER_ID): Promise<Profile> {
   const profile = { ...p, updatedAt: now() };
-  await (await sql()).run("INSERT INTO profile (id, data) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data", [JSON.stringify(profile)]);
+  await (await sql()).run(
+    "INSERT INTO profiles (user_id, data) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET data = excluded.data",
+    [userId, JSON.stringify(profile)],
+  );
   return profile;
 }
 
@@ -42,6 +59,7 @@ export async function saveProfile(p: Omit<Profile, "updatedAt">): Promise<Profil
 function rowToInterview(r: Row, recordingSegments: number[]): Interview {
   return {
     id: r.id as string,
+    userId: (r.user_id as string) ?? LEGACY_USER_ID,
     createdAt: r.created_at as string,
     status: r.status as InterviewStatus,
     prepStage: (r.prep_stage as string) ?? "",
@@ -60,17 +78,28 @@ function rowToInterview(r: Row, recordingSegments: number[]): Interview {
   };
 }
 
-export async function createInterview(config: InterviewConfig): Promise<Interview> {
+export async function createInterview(config: InterviewConfig, userId = LEGACY_USER_ID): Promise<Interview> {
   const id = nanoid(12);
   const at = now();
   await (await sql()).run(
-    "INSERT INTO interviews (id, created_at, updated_at, status, prep_stage, config) VALUES (?, ?, ?, 'preparing', 'Queued', ?)",
-    [id, at, at, JSON.stringify(config)],
+    "INSERT INTO interviews (id, created_at, updated_at, status, prep_stage, config, user_id) VALUES (?, ?, ?, 'preparing', 'Queued', ?, ?)",
+    [id, at, at, JSON.stringify(config), userId],
   );
-  return (await getInterview(id))!;
+  return (await getInterview(id, userId))!;
 }
 
-export async function getInterview(id: string): Promise<Interview | null> {
+export async function getInterview(id: string, userId = LEGACY_USER_ID): Promise<Interview | null> {
+  if (!isValidId(id)) return null;
+  const row = await (await sql()).get("SELECT * FROM interviews WHERE id = ? AND user_id = ?", [id, userId]);
+  if (!row) return null;
+  return rowToInterview(row, await (await files()).listRecordingSegments(id));
+}
+
+/**
+ * Fetches an interview regardless of owner. For background work (preparation, evaluation) that only
+ * has an interview id and needs its userId first — never for a route handling a request directly.
+ */
+export async function getInterviewById(id: string): Promise<Interview | null> {
   if (!isValidId(id)) return null;
   const row = await (await sql()).get("SELECT * FROM interviews WHERE id = ?", [id]);
   if (!row) return null;
@@ -104,8 +133,8 @@ export async function updateInterview(id: string, patch: Partial<Pick<Interview,
   await (await sql()).run(`UPDATE interviews SET ${sets.join(", ")} WHERE id = ?`, [...values, id]);
 }
 
-export async function listInterviews(): Promise<InterviewSummary[]> {
-  const rows = await (await sql()).all("SELECT * FROM interviews ORDER BY created_at DESC");
+export async function listInterviews(userId = LEGACY_USER_ID): Promise<InterviewSummary[]> {
+  const rows = await (await sql()).all("SELECT * FROM interviews WHERE user_id = ? ORDER BY created_at DESC", [userId]);
   return rows.map((r) => {
     const i = rowToInterview(r, []);
     return {
@@ -124,17 +153,19 @@ export async function listInterviews(): Promise<InterviewSummary[]> {
   });
 }
 
-export async function deleteInterview(id: string): Promise<void> {
+export async function deleteInterview(id: string, userId = LEGACY_USER_ID): Promise<void> {
   if (!isValidId(id)) return;
+  const db = await sql();
+  const owned = await db.get("SELECT id FROM interviews WHERE id = ? AND user_id = ?", [id, userId]);
+  if (!owned) return;
   const store = await files();
   for (const e of await listProctorEvents(id)) {
     if (e.snapshot) await store.deleteSnapshot(e.snapshot);
   }
   await store.deleteRecordings(id);
-  const db = await sql();
   // Explicit child deletes: SQLite only cascades with foreign keys enabled on the connection.
   for (const table of ["responses", "proctor_events", "coach_messages"]) await db.run(`DELETE FROM ${table} WHERE interview_id = ?`, [id]);
-  await db.run("DELETE FROM interviews WHERE id = ?", [id]);
+  await db.run("DELETE FROM interviews WHERE id = ? AND user_id = ?", [id, userId]);
 }
 
 /* ---------------------------- responses ---------------------------- */
@@ -277,25 +308,26 @@ const EMPTY_INSIGHTS: StoredInsights = {
   studyPlan: null,
 };
 
-export async function getInsights(): Promise<StoredInsights> {
-  const row = await (await sql()).get("SELECT data FROM insights WHERE id = 1");
+export async function getInsights(userId = LEGACY_USER_ID): Promise<StoredInsights> {
+  const row = await (await sql()).get("SELECT data FROM user_insights WHERE user_id = ?", [userId]);
   return { ...EMPTY_INSIGHTS, ...(fromJson<StoredInsights>(row?.data) ?? {}) };
 }
 
-export async function saveInsights(insights: StoredInsights): Promise<void> {
-  await (await sql()).run("INSERT INTO insights (id, data) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data", [
-    JSON.stringify({ ...insights, updatedAt: now() }),
-  ]);
+export async function saveInsights(insights: StoredInsights, userId = LEGACY_USER_ID): Promise<void> {
+  await (await sql()).run(
+    "INSERT INTO user_insights (user_id, data) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET data = excluded.data",
+    [userId, JSON.stringify({ ...insights, updatedAt: now() })],
+  );
 }
 
 /** Questions asked in previous interviews — used to avoid repeats and to track progress. */
-export async function pastQuestionHistory(excludeInterviewId?: string, limit = 60) {
+export async function pastQuestionHistory(userId = LEGACY_USER_ID, excludeInterviewId?: string, limit = 60) {
   const rows = await (await sql()).all(
     `SELECT r.data AS data, i.config AS config, i.evaluation AS evaluation
      FROM responses r JOIN interviews i ON i.id = r.interview_id
-     WHERE i.status = 'completed' AND i.id <> ?
+     WHERE i.status = 'completed' AND i.user_id = ? AND i.id <> ?
      ORDER BY i.created_at DESC, r.seq LIMIT ?`,
-    [excludeInterviewId ?? "", limit],
+    [userId, excludeInterviewId ?? "", limit],
   );
   return rows.map((row) => {
     const resp = fromJson<InterviewResponse>(row.data)!;

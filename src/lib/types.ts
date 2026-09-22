@@ -132,6 +132,7 @@ export const isScored = (evaluation: Evaluation | null | undefined): boolean => 
 
 export interface Interview {
   id: string;
+  userId: string;
   createdAt: string;
   status: InterviewStatus;
   prepStage: string;

@@ -62,6 +62,17 @@ const TABLES = [
     id INTEGER PRIMARY KEY CHECK (id = 1),
     data TEXT NOT NULL
   )`,
+  // Per-user replacements for the old singleton `profile`/`insights` tables above, which can never
+  // hold more than one row each (their CHECK constraint forced id = 1 for everyone). The old tables
+  // are left in place, unused, so upgrading needs no destructive migration.
+  `CREATE TABLE IF NOT EXISTS profiles (
+    user_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS user_insights (
+    user_id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+  )`,
 ];
 
 /** Columns added after the first release: [table, column, definition]. */
@@ -69,7 +80,11 @@ const ADDED_COLUMNS: [string, string, string][] = [
   ["interviews", "last_camera_at", "TEXT"],
   ["interviews", "updated_at", "TEXT"],
   ["coach_messages", "seq", "INTEGER NOT NULL DEFAULT 0"],
+  ["interviews", "user_id", "TEXT"],
 ];
+
+/** Tenant id used for data that predates per-user accounts, and for every request when no login is configured. */
+export const LEGACY_USER_ID = "legacy";
 
 export async function ensureSchema(db: SqlDb): Promise<void> {
   for (const statement of TABLES) await db.run(statement);
@@ -81,6 +96,16 @@ export async function ensureSchema(db: SqlDb): Promise<void> {
       if (!columns.some((c) => c.name === column)) await db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     }
   }
+  // One-time, idempotent: tag pre-existing rows so they keep working under the new per-user tables.
+  await db.run(`UPDATE interviews SET user_id = ? WHERE user_id IS NULL`, [LEGACY_USER_ID]);
+  await db.run(
+    `INSERT INTO profiles (user_id, data) SELECT ?, data FROM profile WHERE id = 1 AND NOT EXISTS (SELECT 1 FROM profiles WHERE user_id = ?)`,
+    [LEGACY_USER_ID, LEGACY_USER_ID],
+  );
+  await db.run(
+    `INSERT INTO user_insights (user_id, data) SELECT ?, data FROM insights WHERE id = 1 AND NOT EXISTS (SELECT 1 FROM user_insights WHERE user_id = ?)`,
+    [LEGACY_USER_ID, LEGACY_USER_ID],
+  );
 }
 
 /**

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { currentUserId } from "@/lib/current-user";
 import { getInsights, listInterviews } from "@/lib/repo";
 
 export async function GET() {
-  return NextResponse.json({ insights: await getInsights(), interviews: await listInterviews() });
+  const userId = await currentUserId();
+  return NextResponse.json({ insights: await getInsights(userId), interviews: await listInterviews(userId) });
 }

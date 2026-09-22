@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { fail } from "@/lib/api";
+import { currentUserId } from "@/lib/current-user";
 import { getProfile, saveProfile } from "@/lib/repo";
 
 const ProfileInput = z.object({
@@ -11,11 +12,11 @@ const ProfileInput = z.object({
 });
 
 export async function GET() {
-  return NextResponse.json(await getProfile());
+  return NextResponse.json(await getProfile(await currentUserId()));
 }
 
 export async function PUT(req: Request) {
   const parsed = ProfileInput.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? "Invalid profile");
-  return NextResponse.json(await saveProfile(parsed.data));
+  return NextResponse.json(await saveProfile(parsed.data, await currentUserId()));
 }

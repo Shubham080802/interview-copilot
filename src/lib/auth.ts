@@ -9,17 +9,10 @@ export function authConfigured(): boolean {
 }
 
 /**
- * What actually stops a stranger from getting an account at all is the Clerk Dashboard's own
- * "Restricted" sign-up mode (Restrictions → allow only your email) — that runs before any of this
- * code, and can't be bypassed by calling an API route directly. ALLOWED_EMAILS is only a second,
- * optional check that turns "somehow signed in anyway" into a clear in-app message instead of a
- * working app for the wrong person. Leave it unset to rely on the Dashboard restriction alone.
+ * Anyone can sign up and use the app now — everyone gets their own private profile and interview
+ * history. ALLOWED_EMAILS is repurposed for one thing only: whichever email it names inherits the
+ * data that existed before accounts did, the first time it signs in. See claimLegacyData in repo.ts.
  */
-export function isAllowedEmail(email: string | null | undefined): boolean {
-  const allowed = (process.env.ALLOWED_EMAILS ?? "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-  if (allowed.length === 0) return true;
-  return Boolean(email) && allowed.includes(email!.toLowerCase());
+export function legacyOwnerEmail(): string | null {
+  return (process.env.ALLOWED_EMAILS ?? "").split(",")[0]?.trim().toLowerCase() || null;
 }

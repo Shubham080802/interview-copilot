@@ -15,6 +15,6 @@ export async function GET(_req: Request, ctx: IdParams) {
 export async function DELETE(_req: Request, ctx: IdParams) {
   const interview = await loadInterview(ctx);
   if (!interview) return fail("Interview not found", 404);
-  await deleteInterview(interview.id);
+  await deleteInterview(interview.id, interview.userId);
   return NextResponse.json({ ok: true });
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { authConfigured, isAllowedEmail } from "@/lib/auth";
+import { authConfigured, legacyOwnerEmail } from "@/lib/auth";
 
 const ENV_KEYS = ["CLERK_SECRET_KEY", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "ALLOWED_EMAILS"] as const;
 const saved: Record<string, string | undefined> = {};
@@ -34,18 +34,14 @@ describe("authConfigured", () => {
   });
 });
 
-describe("isAllowedEmail", () => {
-  it("allows anyone through when the list is unset — trusts the Clerk Dashboard restriction alone", () => {
+describe("legacyOwnerEmail", () => {
+  it("is null when unset", () => {
     delete process.env.ALLOWED_EMAILS;
-    expect(isAllowedEmail("anyone@example.com")).toBe(true);
-    expect(isAllowedEmail(null)).toBe(true);
+    expect(legacyOwnerEmail()).toBeNull();
   });
 
-  it("matches case-insensitively against a comma-separated list, trimming spaces", () => {
+  it("reads the first email, lowercased and trimmed", () => {
     process.env.ALLOWED_EMAILS = " Me@Example.com, other@example.com ";
-    expect(isAllowedEmail("me@example.com")).toBe(true);
-    expect(isAllowedEmail("ME@EXAMPLE.COM")).toBe(true);
-    expect(isAllowedEmail("stranger@example.com")).toBe(false);
-    expect(isAllowedEmail(null)).toBe(false);
+    expect(legacyOwnerEmail()).toBe("me@example.com");
   });
 });

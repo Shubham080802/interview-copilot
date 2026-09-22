@@ -1,5 +1,6 @@
 import "server-only";
 import { NextResponse } from "next/server";
+import { currentUserId } from "./current-user";
 import { getInterview } from "./repo";
 
 export type IdParams = { params: Promise<{ id: string }> };
@@ -17,5 +18,5 @@ export const interviewTerminated = (reason: string) =>
 
 export async function loadInterview(ctx: IdParams) {
   const { id } = await ctx.params;
-  return await getInterview(id);
+  return await getInterview(id, await currentUserId());
 }
