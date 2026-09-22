@@ -2,13 +2,13 @@
 import { useRouter } from "next/navigation";
 import { Link2, Play, Sparkles } from "lucide-react";
 import { useRef, useState } from "react";
-import { Button, Card, cx, Field, inputClass, Spinner } from "@/components/ui";
+import { Combobox } from "@/components/Combobox";
+import { Button, Card, CardHeading, cx, Field, inputClass, Spinner } from "@/components/ui";
 import { api } from "@/lib/client/api";
 import { INTERVIEWER_VOICES } from "@/lib/client/interviewer-voice";
+import { FIELDS, POPULAR_FIELDS, popularRoles, type RoleSuggestion } from "@/lib/role-catalog";
 import { INTERVIEWER_VOICE_IDS, ROUND_LABELS, ROUND_TYPES, type InterviewConfig, type JobPosting, type RoundType } from "@/lib/schemas";
 import type { Interview } from "@/lib/types";
-
-const FIELDS = ["Software Engineering", "Frontend Engineering", "Backend Engineering", "Data Science / ML", "Data Engineering", "DevOps / SRE / Cloud", "Mobile Development", "Cybersecurity", "Product Management", "UX / Product Design", "Business / Data Analyst", "QA / Test Engineering", "Consulting", "Finance", "Marketing", "Sales"];
 
 const ROUND_HELP: Record<RoundType, string> = {
   technical: "Concepts, debugging, trade-offs",
@@ -40,9 +40,27 @@ const DEFAULTS: InterviewConfig = {
   scheduledAt: "",
 };
 
-export function NewInterviewForm({ aiEnabled, zoomConfigured }: { aiEnabled: boolean; zoomConfigured: boolean }) {
+export function NewInterviewForm({
+  aiEnabled,
+  zoomConfigured,
+  suggestions = [],
+  initial,
+}: {
+  aiEnabled: boolean;
+  zoomConfigured: boolean;
+  /** Roles the candidate's saved profile looks suited for, offered as a shortcut. */
+  suggestions?: RoleSuggestion[];
+  /** Prefills from a link (e.g. "Start an interview" on the Profile page). */
+  initial?: Partial<Pick<InterviewConfig, "field" | "role" | "seniority">>;
+}) {
   const router = useRouter();
-  const [c, setC] = useState<InterviewConfig>(DEFAULTS);
+  const [c, setC] = useState<InterviewConfig>(() => ({ ...DEFAULTS, ...initial }));
+  const [dismissedSuggestions, setDismissedSuggestions] = useState(false);
+
+  function applySuggestion(s: RoleSuggestion) {
+    setC((prev) => ({ ...prev, field: s.field, role: s.role, seniority: s.seniority }));
+    setDismissedSuggestions(true);
+  }
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const set = <K extends keyof InterviewConfig>(k: K, v: InterviewConfig[K]) => setC((prev) => ({ ...prev, [k]: v }));
@@ -99,8 +117,30 @@ export function NewInterviewForm({ aiEnabled, zoomConfigured }: { aiEnabled: boo
 
   return (
     <form onSubmit={submit} className="mt-6 space-y-6">
+      {suggestions.length > 0 && !dismissedSuggestions && (
+        <Card className="space-y-3 border-violet-200 bg-violet-50/40">
+          <div className="flex items-start justify-between gap-2">
+            <CardHeading icon={Sparkles} tone="violet">Suggested for you</CardHeading>
+            <button type="button" onClick={() => setDismissedSuggestions(true)} className="text-xs text-slate-400 hover:text-slate-600">Dismiss</button>
+          </div>
+          <p className="text-sm text-slate-500">Based on your saved profile — pick one to fill in the role below, or ignore it and set up your own.</p>
+          <div className="flex flex-wrap gap-2">
+            {suggestions.map((s) => (
+              <button
+                type="button"
+                key={s.field}
+                onClick={() => applySuggestion(s)}
+                className="rounded-full border border-violet-300 bg-white px-3 py-1.5 text-sm font-medium text-violet-800 shadow-sm transition hover:bg-violet-50"
+              >
+                {s.role} <span className="text-violet-500">· {s.field}</span>
+              </button>
+            ))}
+          </div>
+        </Card>
+      )}
+
       <Card className="space-y-3 border-brand-200 bg-brand-50/30">
-        <div className="flex items-center gap-2 font-semibold"><Link2 className="h-4 w-4 text-brand-600" /> Import from a job posting</div>
+        <CardHeading icon={Link2}>Import from a job posting</CardHeading>
         <p className="text-sm text-slate-500">Paste a link to the job ad (company careers page, Greenhouse, Lever, Workday…) and we&apos;ll fill in the role, company, description and requirements.</p>
         <div className="flex flex-wrap gap-2">
           <input
@@ -129,8 +169,7 @@ export function NewInterviewForm({ aiEnabled, zoomConfigured }: { aiEnabled: boo
         <SectionTitle n={1} title="Role" />
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Field">
-            <input list="fields" className={inputClass} value={c.field} onChange={(e) => set("field", e.target.value)} />
-            <datalist id="fields">{FIELDS.map((f) => <option key={f} value={f} />)}</datalist>
+            <Combobox value={c.field} onChange={(v) => set("field", v)} options={FIELDS} popular={POPULAR_FIELDS} placeholder="e.g. Software Engineering" />
           </Field>
           <Field label="Job title *"><input className={inputClass} placeholder="e.g. Software Engineer II" value={c.role} onChange={(e) => set("role", e.target.value)} /></Field>
           <Field label="Level">
@@ -140,6 +179,24 @@ export function NewInterviewForm({ aiEnabled, zoomConfigured }: { aiEnabled: boo
             </select>
           </Field>
         </div>
+        {popularRoles(c.field).length > 0 && (
+          <div className="-mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-xs text-slate-500">Popular roles for {c.field}:</span>
+            {popularRoles(c.field).map((role) => (
+              <button
+                type="button"
+                key={role}
+                onClick={() => set("role", role)}
+                className={cx(
+                  "rounded-full border px-2.5 py-1 text-xs font-medium transition",
+                  c.role === role ? "border-brand-500 bg-brand-50 text-brand-700" : "border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50",
+                )}
+              >
+                {role}
+              </button>
+            ))}
+          </div>
+        )}
         <Field label="Interviewer voice" hint="A natural-sounding voice generated on your device. Press play to hear each one.">
           <div className="grid gap-2 sm:grid-cols-2">
             {INTERVIEWER_VOICE_IDS.map((voice) => (
