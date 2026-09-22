@@ -58,7 +58,7 @@ Potential next steps include stronger multi-user access control, richer intervie
 
 ## Built with
 
-`Next.js` · `TypeScript` · `React` · `Anthropic` · `Zod` · `SQLite` · `PostgreSQL` · `Vercel Blob` · `ONNX Runtime` · `Kokoro TTS` · `Silero VAD` · `WeSpeaker` · `MediaPipe` · `Monaco` · `Vitest`
+`Next.js` · `TypeScript` · `React` · `Anthropic` · `Zod` · `SQLite` · `PostgreSQL` · `Vercel Blob` · `Clerk` · `ONNX Runtime` · `Kokoro TTS` · `Silero VAD` · `WeSpeaker` · `MediaPipe` · `Monaco` · `Vitest`
 
 ## Run locally
 
@@ -84,6 +84,16 @@ npm run build
 ```
 
 The first interview downloads the voice model (~90 MB) once and keeps it in the browser cache. Interviews, recordings and snapshots are stored under `data/` locally, or in Postgres + Vercel Blob when `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN` are set.
+
+## Login (optional)
+
+By default the app is open to whoever can reach it — fine for local use, but the profile page holds a real name and resume once you fill it in. [Clerk](https://clerk.com) adds a sign-in gate in front of everything, pages and API routes alike:
+
+1. Create a free application at [clerk.com](https://clerk.com) and copy its **Publishable key** and **Secret key** into `.env.local` (and into your Vercel project's environment variables for the deployed site).
+2. In the Clerk Dashboard, open **Restrictions** and set sign-up to **Restricted**, then add only your own email to the allowlist. **This step is what actually stops a stranger from creating an account** — the app's own code only ever checks "is someone signed in", not "is this the right person", because that check has to run before any password exists to check.
+3. Restart the app (or redeploy). A sign-in page now appears before anything else, and a `⋮` account menu shows up in the header with a sign-out option.
+
+Leaving the two keys unset skips all of this — the app runs exactly as it does without them. There is no multi-user support: everyone who signs in shares the same profile and interview history, which is the point — this gate is for keeping the app to yourself, not for letting several people use it with separate data.
 
 ## Privacy
 
