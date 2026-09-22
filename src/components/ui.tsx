@@ -3,6 +3,7 @@ import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ComponentProps, ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 export { cx };
@@ -38,6 +39,15 @@ export function Badge({ tone = "slate", children, className }: { tone?: "slate" 
     blue: "bg-sky-50 text-sky-700 ring-sky-600/20",
   };
   return <span className={cx("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ring-transparent", tones[tone], className)}>{children}</span>;
+}
+
+export function CardHeading({ icon: Icon, tone = "brand", children }: { icon: LucideIcon; tone?: "brand" | "violet"; children: ReactNode }) {
+  const toneClass = tone === "violet" ? "text-violet-600" : "text-brand-600";
+  return (
+    <div className="flex items-center gap-2 font-semibold">
+      <Icon className={cx("h-4 w-4", toneClass)} /> {children}
+    </div>
+  );
 }
 
 export function Field({ label, hint, children, className }: { label: string; hint?: string; children: ReactNode; className?: string }) {
